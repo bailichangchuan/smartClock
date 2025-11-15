@@ -1,6 +1,7 @@
 import usocket as socket
 import ujson as json
 from config import API_DOMAIN, API_PATH
+VERBOSE = False
 
 def http_get_utf8(domain, path, timeout=10):
     """UTF-8编码HTTP请求"""
@@ -8,7 +9,8 @@ def http_get_utf8(domain, path, timeout=10):
         # 解析域名（纯位置参数）
         addr_info = socket.getaddrinfo(domain, 80)
         ip = addr_info[0][-1][0]
-        print("解析域名 " + domain + " → IP: " + ip)
+        if VERBOSE:
+            print("解析域名 " + domain + " → IP: " + ip)
         
         # 创建socket并连接（纯位置参数）
         sock = socket.socket()
@@ -23,8 +25,9 @@ def http_get_utf8(domain, path, timeout=10):
         request += "Accept-Charset: utf-8\r\n"
         request += "\r\n"  # 必须保留的请求结束符
         
-        print("发送请求：")
-        print(request)
+        if VERBOSE:
+            print("发送请求：")
+            print(request)
         
         sock.send(request.encode("utf-8"))
         
@@ -40,11 +43,13 @@ def http_get_utf8(domain, path, timeout=10):
         response_str = response_data.decode("utf-8", "ignore")  
         if "\r\n\r\n" in response_str:
             headers, body = response_str.split("\r\n\r\n", 1)
-            print("响应头：", headers)
-            print("响应体：", body[:300])
+            if VERBOSE:
+                print("响应头：", headers)
+                print("响应体：", body[:300])
             
             if "HTTP/1.1 200 OK" in headers:
-                print("API请求成功！")
+                if VERBOSE:
+                    print("API请求成功！")
                 return body
             else:
                 status_code = headers.split()[1]
