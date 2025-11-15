@@ -1,6 +1,6 @@
 from machine import RTC
 from utime import localtime, mktime
-from resource.network import get_ntp_time
+from util.network import get_ntp_time
 rtc = RTC()
 def set_time_from_ntp():
     ntp_time = get_ntp_time()
