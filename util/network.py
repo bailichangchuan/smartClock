@@ -1,12 +1,14 @@
 import usocket
 import utime
+import time
 import ussl
 import struct
 import network
+from config import WIFI_SSID, WIFI_PWD
 
 # Utility functions for network operations
 # NTP time retrieval 获取NTP时间
-def get_ntp_time(host="pool.ntp.org", port=123, timeout=5)::
+def get_ntp_time(host="pool.ntp.org", port=123, timeout=5):
     NTP_DELTA = 2208988800
     msg = bytearray(48)
     msg[0] = 0x1B

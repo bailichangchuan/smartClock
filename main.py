@@ -1,8 +1,7 @@
-import network
-impport util.network as net_util
-from functions.weather import get_hongkong_weather
+import util.network as net_util
+from function.weather import get_hongkong_weather
+import machine
 from config import REFRESH_INTERVAL
-import usocket as socket
 import ujson as json
 import time
 
