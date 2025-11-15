@@ -1,32 +1,34 @@
-import network
 import usocket as socket
 import ujson as json
-import time
-from config import WIFI_SSID, WIFI_PWD, API_DOMAIN, API_PATH, REFRESH_INTERVAL
-from util.network import connect_wifi
-
+from config import API_DOMAIN, API_PATH
 
 def http_get_utf8(domain, path, timeout=10):
-    """UTF-8编码HTTP请求，获取天气数据"""
+    """UTF-8编码HTTP请求"""
     try:
-        # 解析域名获取IP
+        # 解析域名（纯位置参数）
         addr_info = socket.getaddrinfo(domain, 80)
         ip = addr_info[0][-1][0]
+        print("解析域名 " + domain + " → IP: " + ip)
         
-        # 创建并连接socket
+        # 创建socket并连接（纯位置参数）
         sock = socket.socket()
         sock.settimeout(timeout)
         sock.connect((ip, 80))
         
-        # 发送HTTP请求（UTF-8编码）
-        request = f"GET {path} HTTP/1.1\r\n"
-        request += f"Host: {domain}\r\n"
+        # 发送HTTP请求（精简必要头，无多余配置）
+        request = "GET " + path + " HTTP/1.1\r\n"
+        request += "Host: " + domain + "\r\n"
         request += "Connection: close\r\n"
+        request += "Accept: application/json,*/*\r\n"
         request += "Accept-Charset: utf-8\r\n"
-        request += "\r\n"
+        request += "\r\n"  # 必须保留的请求结束符
+        
+        print("发送请求：")
+        print(request)
+        
         sock.send(request.encode("utf-8"))
         
-        # 接收响应数据
+        # 接收响应
         response_data = b""
         while True:
             data = sock.recv(1024)
@@ -35,29 +37,27 @@ def http_get_utf8(domain, path, timeout=10):
             response_data += data
         sock.close()
         
-        # 解析响应（UTF-8解码）
-        response_str = response_data.decode("utf-8")
+        response_str = response_data.decode("utf-8", "ignore")  
         if "\r\n\r\n" in response_str:
             headers, body = response_str.split("\r\n\r\n", 1)
-            # 打印API编码信息（验证UTF-8）
-            for line in headers.split("\r\n"):
-                if "Content-Type" in line:
-                    print(" API编码：", line)
-            # 返回响应体（天气数据）
+            print("响应头：", headers)
+            print("响应体：", body[:300])
+            
             if "HTTP/1.1 200 OK" in headers:
+                print("API请求成功！")
                 return body
             else:
                 status_code = headers.split()[1]
-                print(" API请求失败，状态码：", status_code)
+                print("API请求失败，状态码：" + status_code)
                 return None
         else:
-            print(" 响应格式错误，无数据分隔符")
+            print("响应格式错误")
             return None
     
     except OSError as e:
-        print(" 网络异常：", type(e).__name__, "->", e)
+        print("网络异常：", type(e).__name__, "->", e)
     except Exception as e:
-        print(" HTTP请求错误：", type(e).__name__, "->", e)
+        print("HTTP请求错误：", type(e).__name__, "->", e)
     return None
 
 def get_hongkong_weather():
