@@ -2,6 +2,8 @@ import network
 import usocket as socket
 import ujson as json
 import time
+from config import WIFI_SSID, WIFI_PWD, API_DOMAIN, API_PATH, REFRESH_INTERVAL
+from util.network import connect_wifi
 
 
 def http_get_utf8(domain, path, timeout=10):
