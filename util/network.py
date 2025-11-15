@@ -104,7 +104,7 @@ def connect_wifi():
         wlan.connect(WIFI_SSID, WIFI_PWD)
         
         # 10秒超时等待
-        timeout = 10
+        timeout = 15
         while not wlan.isconnected() and timeout > 0:
             print("连接中... 剩余", timeout, "秒")
             time.sleep(1)
