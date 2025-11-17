@@ -1,8 +1,6 @@
 import util.network as net_util
-from function.weather import get_hongkong_weather
-import machine
+import function.weather
 from config import REFRESH_INTERVAL
-import ujson as json
 import time
 
 def main():
@@ -19,7 +17,7 @@ def main():
     # 循环查询天气
     print("\n 开始每", REFRESH_INTERVAL, "秒获取一次天气...\n")
     while True:
-        get_hongkong_weather()
+        function.weather.get_weather_by_ip()
         time.sleep(REFRESH_INTERVAL)
 
 if __name__ == "__main__":

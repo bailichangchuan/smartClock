@@ -3,98 +3,92 @@ import ujson as json
 from config import API_DOMAIN, API_PATH
 VERBOSE = False
 
-def http_get_utf8(domain, path, timeout=10):
-    """UTF-8编码HTTP请求"""
+def weather_get(domain, path, timeout=10):
+    """天气API GET请求"""
     try:
-        # 解析域名（纯位置参数）
-        addr_info = socket.getaddrinfo(domain, 80)
-        ip = addr_info[0][-1][0]
-        if VERBOSE:
-            print("解析域名 " + domain + " → IP: " + ip)
-        
-        # 创建socket并连接（纯位置参数）
+        # 创建socket并设置超时，直接用域名连接（底层自动DNS解析）
         sock = socket.socket()
         sock.settimeout(timeout)
-        sock.connect((ip, 80))
+        sock.connect((domain, 80))
         
-        # 发送HTTP请求（精简必要头，无多余配置）
-        request = "GET " + path + " HTTP/1.1\r\n"
-        request += "Host: " + domain + "\r\n"
-        request += "Connection: close\r\n"
-        request += "Accept: application/json,*/*\r\n"
-        request += "Accept-Charset: utf-8\r\n"
-        request += "\r\n"  # 必须保留的请求结束符
-        
+        # 构造请求报文
+        request = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {domain}\r\n"
+            "Connection: close\r\n"
+            "Accept: application/json,*/*\r\n\r\n"
+        )
         if VERBOSE:
-            print("发送请求：")
-            print(request)
+            print("发送请求：\n", request)
         
+        # 字符串转字节流发送
         sock.send(request.encode("utf-8"))
         
-        # 接收响应
+        # 接收响应数据
         response_data = b""
-        while True:
-            data = sock.recv(1024)
-            if not data:
-                break
+        while data := sock.recv(1024):
             response_data += data
         sock.close()
         
-        response_str = response_data.decode("utf-8", "ignore")  
-        if "\r\n\r\n" in response_str:
-            headers, body = response_str.split("\r\n\r\n", 1)
-            if VERBOSE:
-                print("响应头：", headers)
-                print("响应体：", body[:300])
-            
-            if "HTTP/1.1 200 OK" in headers:
-                if VERBOSE:
-                    print("API请求成功！")
-                return body
-            else:
-                status_code = headers.split()[1]
-                print("API请求失败，状态码：" + status_code)
-                return None
-        else:
+        # 字节流转字符串，忽略异常字符
+        response_str = response_data.decode("utf-8", "ignore")
+        if "\r\n\r\n" not in response_str:
             print("响应格式错误")
+            return None
+        
+        # 拆分响应头和响应体
+        headers, body = response_str.split("\r\n\r\n", 1)
+        if VERBOSE:
+            print("响应头：", headers)
+            print("响应体：", body[:300])
+        
+        # 验证响应状态
+        if "HTTP/1.1 200 OK" in headers:
+            if VERBOSE:
+                print("API请求成功！")
+            return body
+        else:
+            status_code = headers.split()[1]
+            print(f"API请求失败，状态码：{status_code}")
             return None
     
     except OSError as e:
-        print("网络异常：", type(e).__name__, "->", e)
+        print(f"网络异常：{type(e).__name__} -> {e}")
     except Exception as e:
-        print("HTTP请求错误：", type(e).__name__, "->", e)
+        print(f"HTTP请求错误：{type(e).__name__} -> {e}")
     return None
 
-def get_hongkong_weather():
-    """获取并打印香港实时天气（全中文显示）"""
+def get_weather_by_ip():
+    """根据IP自动获取所在地实时天气"""
     try:
-        json_str = http_get_utf8(API_DOMAIN, API_PATH)
+        # 发起天气API请求
+        json_str = weather_get(API_DOMAIN, API_PATH)
         if not json_str:
             return
         
-        # 解析JSON天气数据
+        # 解析天气JSON数据
         weather_data = json.loads(json_str)
         result = weather_data["results"][0]
-        location = result["location"]["name"]  # 城市名（中文）
+        location = result["location"]["name"]
         now = result["now"]
-        weather = now["text"]  # 天气状况（中文）
-        temperature = now["temperature"]  # 温度
-        last_update = result["last_update"].split('+')[0]  # 更新时间（去除时区）
+        weather = now["text"]
+        temperature = now["temperature"]
+        last_update = result["last_update"].split('+')[0]
         
-        # 格式化中文输出（带分隔线，清晰易读）
+        # 格式化输出天气信息
         weather_info = (
             "\n==================================\n"
-            "  城市：" + location + "\n"
-            "  天气：" + weather + "\n"
-            "  温度：" + temperature + "℃\n"  # 恢复℃符号，screen支持
-            " 最后更新：" + last_update + "\n"
+            f"  城市：{location}\n"
+            f"  天气：{weather}\n"
+            f"  温度：{temperature}℃\n"
+            f" 最后更新：{last_update}\n"
             "==================================\n"
         )
         print(weather_info)
     
     except ValueError as e:
-        print(" JSON解析失败：", e, "| 响应片段：", json_str[:50])
+        print(f"JSON解析失败：{e} | 响应片段：{json_str[:50]}")
     except KeyError as e:
-        print(" 数据字段缺失：", e, "（检查API Key是否有效）")
+        print(f"数据字段缺失：{e}")
     except Exception as e:
-        print(" 天气查询异常：", type(e).__name__, "->", e)
+        print(f"天气查询异常：{type(e).__name__} -> {e}")
