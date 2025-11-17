@@ -3,7 +3,7 @@ WIFI_SSID = "l888"                # 替换为你的WiFi SSID
 WIFI_PWD = "12345678"             # 替换为你的WiFi密码
 
 # ==================== 知心天气配置 ====================
-SENIVERSE_KEY = "xxxxx  # 替换为你的知心天气API Key
+SENIVERSE_KEY = "xxxxxxxxxxxxxx"  # 替换为你的知心天气API Key
 LOCATION = "ip"                      # 定位方式：ip=自动IP定位，也可填写具体城市名（如"北京"）
 API_DOMAIN = "api.seniverse.com"     # 知心天气API域名（无需修改）
 API_PATH = f"/v3/weather/now.json?key={SENIVERSE_KEY}&location={LOCATION}&language=zh-Hans&unit=c"
