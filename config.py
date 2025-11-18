@@ -21,8 +21,8 @@ TIME_PRINT_INTERVAL = 5              # 串口时间输出间隔 单位：秒
 # ==================== 串口1配置 ====================
 UART_NUM = 1                          # ESP32串口编号 可选0/1/2
 UART_BAUDRATE = 9600                  # 传感器波特率 需与传感器手册一致
-UART_TX_PIN = 17                      # ESP32 TX引脚 连接传感器RX引脚
-UART_RX_PIN = 16                      # ESP32 RX引脚 连接传感器TX引脚
+UART_TX_PIN = 3                      # ESP32 TX引脚 连接传感器RX引脚
+UART_RX_PIN = 2                      # ESP32 RX引脚 连接传感器TX引脚
 
 # ==================== 传感器读取配置 ====================
 SENSOR_READ_INTERVAL = 2              # 传感器数据读取间隔 单位：秒

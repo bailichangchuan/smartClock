@@ -91,7 +91,7 @@ def get_current_formatted_time():
     r = rtc.datetime()
     return f"{r[0]:04d}-{r[1]:02d}-{r[2]:02d} {r[4]:02d}:{r[5]:02d}:{r[6]:02d}"
 
-def send_time_to_serial_screen():
+def send_time_to_serial_screen(uart, force=False):  # 核心：新增force参数，默认False（原有逻辑）
     global last_date, last_weekday, last_minute
     r = rtc.datetime()
     
@@ -103,26 +103,24 @@ def send_time_to_serial_screen():
     # 格式化关键对比参数
     current_date = f"{year:04d}-{month:02d}-{day:02d}"
     current_weekday = [None, '一', '二', '三', '四', '五', '六', '日'][weekday_num]
-    current_minute = minute
+    current_minute_val = minute  # 避免变量名与函数参数冲突（优化可读性）
     
-    # 短延时 避免串口拥堵
-    utime.sleep_ms(50)
     
-    # ===日期更新（t0）=== 仅日期变化时更新
-    if current_date != last_date:
-        sent_to_screen.upload(current_date, control_name="t0", property_name="txt")
+    # ===日期更新（t0）=== 强制更新或数据变化时发送
+    if force or current_date != last_date:
+        sent_to_screen.upload(uart, current_date, control_name="t0", property_name="txt")  # 传入uart
         last_date = current_date
-        utime.sleep_ms(50)
     
-    # ===星期更新（t1）=== 仅星期变化时更新
-    if current_weekday != last_weekday:
+    
+    # ===星期更新（t1）=== 强制更新或数据变化时发送
+    if force or current_weekday != last_weekday:
         weekday_str = f"星期{current_weekday}"
-        sent_to_screen.upload(weekday_str, control_name="t1", property_name="txt")
+        sent_to_screen.upload(uart, weekday_str, control_name="t1", property_name="txt")  # 传入uart
         last_weekday = current_weekday
-        utime.sleep_ms(50)
+       
     
-    # ===时间更新（t2）=== 仅分钟变化时更新
-    if current_minute != last_minute:
+    # ===时间更新（t2）=== 强制更新或数据变化时发送
+    if force or current_minute_val != last_minute:
         time_str = f"{hour:02d}:{minute:02d}"
-        sent_to_screen.upload(time_str, control_name="t2", property_name="txt")
-        last_minute = current_minute
+        sent_to_screen.upload(uart, time_str, control_name="t2", property_name="txt")  # 传入uart
+        last_minute = current_minute_val
