@@ -1,16 +1,21 @@
 from machine import RTC
 import socket
+import utime
 from config import NTP_SERVER, TIMEZONE_OFFSET, NTP_TIMEOUT
+from ui import sent_to_screen
 
 VERBOSE = False
 rtc = RTC()
 
+# 存储上次更新状态 用于判断是否需要刷新显示
+last_date = None
+last_weekday = None
+last_minute = None
+
 def _is_leap_year(year):
-    # 判断闰年
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 def _ntp_to_local(ntp_ts):
-    # NTP时间戳转换为本地时间元组
     ntp_ts += int(TIMEZONE_OFFSET * 3600)
     sec_per_day = 86400
     total_days = ntp_ts // sec_per_day
@@ -43,7 +48,6 @@ def _ntp_to_local(ntp_ts):
     return (year, month, day, hours, mins, secs, weekday)
 
 def _get_ntp_timestamp():
-    # 获取NTP服务器UTC时间戳
     sock = None
     try:
         addr_info = socket.getaddrinfo(NTP_SERVER, 123)
@@ -54,13 +58,12 @@ def _get_ntp_timestamp():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(NTP_TIMEOUT)
         ntp_packet = bytearray(48)
-        ntp_packet[0] = 0x23  # NTP v4客户端模式
+        ntp_packet[0] = 0x23
         sock.sendto(ntp_packet, (ntp_ip, 123))
         
         data = sock.recv(48)
         if len(data) != 48:
             return None
-        # 解析大端序时间戳
         return (data[40] << 24) | (data[41] << 16) | (data[42] << 8) | data[43]
     except OSError:
         return None
@@ -69,7 +72,6 @@ def _get_ntp_timestamp():
             sock.close()
 
 def sync_ntp_to_rtc():
-    # 同步NTP时间到RTC，返回成功状态和时区偏移
     ntp_ts = _get_ntp_timestamp()
     if not ntp_ts:
         print("ntp_clock NTP获取失败")
@@ -77,17 +79,50 @@ def sync_ntp_to_rtc():
     
     local = _ntp_to_local(ntp_ts)
     if not (1970 <= local[0] <= 2100):
-        print(f"ntp_clock 时间无效（年份：{local[0]}）")
+        print("ntp_clock 时间无效")
         return False, TIMEZONE_OFFSET
     
-    # RTC参数顺序：年 月 日 星期 时 分 秒 微秒
     rtc.datetime((local[0], local[1], local[2], local[6]+1, local[3], local[4], local[5], 0))
-    
     formatted = f"{local[0]:04d}-{local[1]:02d}-{local[2]:02d} {local[3]:02d}:{local[4]:02d}:{local[5]:02d}"
     print(f"ntp_clock 校准成功：{formatted} UTC+{TIMEZONE_OFFSET:.1f}")
     return True, TIMEZONE_OFFSET
 
 def get_current_formatted_time():
-    # 获取当前RTC格式化时间
     r = rtc.datetime()
     return f"{r[0]:04d}-{r[1]:02d}-{r[2]:02d} {r[4]:02d}:{r[5]:02d}:{r[6]:02d}"
+
+def send_time_to_serial_screen():
+    global last_date, last_weekday, last_minute
+    r = rtc.datetime()
+    
+    # 解析当前时间参数
+    year, month, day = r[0], r[1], r[2]
+    weekday_num = r[3]
+    hour, minute = r[4], r[5]
+    
+    # 格式化关键对比参数
+    current_date = f"{year:04d}-{month:02d}-{day:02d}"
+    current_weekday = [None, '一', '二', '三', '四', '五', '六', '日'][weekday_num]
+    current_minute = minute
+    
+    # 短延时 避免串口拥堵
+    utime.sleep_ms(50)
+    
+    # ===日期更新（t0）=== 仅日期变化时更新
+    if current_date != last_date:
+        sent_to_screen.upload(current_date, control_name="t0", property_name="txt")
+        last_date = current_date
+        utime.sleep_ms(50)
+    
+    # ===星期更新（t1）=== 仅星期变化时更新
+    if current_weekday != last_weekday:
+        weekday_str = f"星期{current_weekday}"
+        sent_to_screen.upload(weekday_str, control_name="t1", property_name="txt")
+        last_weekday = current_weekday
+        utime.sleep_ms(50)
+    
+    # ===时间更新（t2）=== 仅分钟变化时更新
+    if current_minute != last_minute:
+        time_str = f"{hour:02d}:{minute:02d}"
+        sent_to_screen.upload(time_str, control_name="t2", property_name="txt")
+        last_minute = current_minute
