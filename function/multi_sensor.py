@@ -6,7 +6,7 @@ from config import SENSOR_READ_INTERVAL
 # 时间工具模块：提供时间戳（间隔控制）和延时（等待逻辑）功能
 import utime
 # 串口屏推送工具：封装串口屏数据上传逻辑（负责将传感器数据推送到屏幕控件）
-from ui import sent_to_screen
+from util import sent_to_screen
 
 # ===传感器通信协议配置=======
 # 数据帧头：传感器输出数据的固定起始标识（多字节帧头，与传感器协议一致）
@@ -215,7 +215,7 @@ class MultiSensor:
         4. DEBUG日志：仅VERBOSE=True时输出推送信息（受全局开关控制）
         """
 
-        utime.sleep_ms(20)
+        utime.sleep_ms(50)
 
         # 1. 已启用：PM2.5浓度 → 串口屏控件t6（单位：μg/m³）
         current_pm25 = f"{data['pm2_5']} μg/m³"

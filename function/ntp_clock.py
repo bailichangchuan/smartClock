@@ -8,7 +8,7 @@ import utime
 # 配置文件导入：NTP服务器地址、时区偏移、请求超时（统一管理）
 from config import NTP_SERVER, TIMEZONE_OFFSET, NTP_TIMEOUT
 # 串口屏推送工具：封装串口屏数据上传逻辑（推送时间数据到指定控件）
-from ui import sent_to_screen
+from util import sent_to_screen
 
 # ===模块配置与全局变量=======
 # DEBUG日志控制开关：当前为模块级开关，建议后续与main.py全局VERBOSE对齐（保持原逻辑不修改）

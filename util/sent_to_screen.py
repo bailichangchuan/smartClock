@@ -2,11 +2,6 @@
 # 时间工具模块：提供毫秒级延时（避免串口数据拥堵，确保指令完整发送）
 import utime
 
-# ===模块配置=======
-# DEBUG日志控制开关：需与main.py全局VERBOSE对齐（建议在main中统一赋值或通过参数传入）
-# 作用：控制串口屏推送的DEBUG日志（如推送指令详情），True启用，False关闭
-VERBOSE = False
-
 # ===核心工具函数：串口屏数据推送=======
 def upload(
     uart,

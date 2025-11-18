@@ -8,7 +8,7 @@ import utime
 # 配置文件导入：天气API域名和路径（统一管理，便于修改）
 from config import API_DOMAIN, API_PATH
 # 串口屏推送工具：封装串口屏数据上传逻辑（推送天气数据到指定控件）
-from ui import sent_to_screen
+from util import sent_to_screen
 
 # ===模块配置与全局缓存=======
 # DEBUG日志控制开关：当前为模块级开关，建议后续与main.py全局VERBOSE对齐（保持原逻辑不修改）
