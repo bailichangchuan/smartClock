@@ -1,6 +1,6 @@
 # ===程序主入口（仅开机运行一次初始化，绑定双核心）=======
 # 功能：保留开机日志、硬件初始化、核心绑定，不包含定时任务
-# 核心分配：核心0 → screen_control_subsystem，核心1 → timer_control_subsystem
+# 核心分配：核心0 → screen_control_subsystem，核心1 → timer_control_subsystem + SR602人体检测
 
 # ===导入依赖模块=======
 # 硬件控制核心模块：提供UART串口、GPIO引脚等硬件操作接口
@@ -19,6 +19,8 @@ import function.multi_sensor as sensor_module
 import screen_control_subsystem
 # 定时器控制子系统（核心1运行）
 import timer_control_subsystem
+# SR602人体红外检测模块（独立线程，核心1运行）
+import function.sr602 as sr602_module
 # 配置文件导入：所有可配置参数
 from config import (
     SERIAL_PORT,
@@ -84,19 +86,19 @@ def main():
     # 程序启动标识（必显）
     print("==================================")
     print(" 香港实时天气查询程序 - 启动成功")
-    print("==================================")
+    print("==================================\n")
     
     # 1. WiFi连接（核心依赖，连接失败则退出）
-    print("\n==================================")
+    print("==================================")
     print(" WiFi连接 - 正在连接")
     print("==================================\n")
     if not net_util.connect_wifi():
         print("WiFi连接失败 程序退出")
         return
-    print("WiFi连接成功")
+    print("WiFi连接成功\n")
     
     # 2. 串口2初始化（串口屏/天气/时间通信）
-    print("\n==================================")
+    print("==================================")
     print(" 串口2初始化（串口屏/天气/时间）")
     print("==================================\n")
     try:
@@ -112,13 +114,13 @@ def main():
         )
         if VERBOSE:
             print(f"[MAIN DEBUG] 串口2初始化成功：端口{SERIAL_PORT} 波特率{SERIAL_BAUD_RATE}")
-        print("串口2初始化成功")
+        print("串口2初始化成功\n")
     except Exception as e:
         print(f"串口2初始化失败：{e}")
         return
     
     # 3. 串口1初始化（传感器专用）
-    print("\n==================================")
+    print("==================================")
     print(" 串口1初始化（传感器专用）")
     print("==================================\n")
     try:
@@ -135,49 +137,54 @@ def main():
         sensor_uart.write(b"")
         if VERBOSE:
             print(f"[MAIN DEBUG] 串口1初始化成功：端口{UART_NUM} 波特率{UART_BAUDRATE}")
-        print("串口1初始化成功")
+        print("串口1初始化成功\n")
     except Exception as e:
         print(f"串口1初始化失败：{e}")
         sensor_uart = None
     
     # 4. 传感器实例初始化
-    print("\n==================================")
+    print("==================================")
     print(" 传感器初始化 - 启动中")
     print("==================================\n")
     try:
         sensor = sensor_module.MultiSensor(uart=sensor_uart, verbose=VERBOSE)
-        print("传感器初始化成功")
+        print("传感器初始化成功\n")
         # 启动后强制读取一次传感器数据（测试通信）
         if VERBOSE and sensor and global_uart:
-            print("\n[MAIN TEST] 强制读取传感器数据...")
+            print("[MAIN TEST] 强制读取传感器数据...")
             sensor.read_sensor_data(global_uart, force=True)
     except Exception as e:
-        print(f"传感器初始化失败：{e}")
+        print(f"传感器初始化失败：{e}\n")
         sensor = None
     
     # 5. NTP时钟首次校准（阻塞式，确保开机时间准确）
-    print("\n==================================")
+    print("==================================")
     print(" NTP时钟 - 首次校准中")
     print("==================================\n")
     while True:
         success, tz = ntp_module.sync_ntp_to_rtc()
         if success:
-            print(f"NTP校准成功 时区 UTC+{tz:.1f}")
+            print(f"NTP校准成功 时区 UTC+{tz:.1f}\n")
             break
         if VERBOSE:
-            print(f"[MAIN DEBUG] NTP校准重试...")
+            print("[MAIN DEBUG] NTP校准重试...")
         sleep(2)
     
     # 6. 启动双核心任务（核心0和核心1分别运行对应子系统）
-    print("\n==================================")
-    print(" 双核心任务启动 - 系统开始运行")
     print("==================================")
+    print(" 双核心任务启动 - 系统开始运行")
+    print("==================================\n")
     print(f" 核心0：串口屏控制子系统（screen_control_subsystem）")
-    print(f" 核心1：定时器控制子系统（timer_control_subsystem）")
+    print(f" 核心1：定时器控制子系统（timer_control_subsystem）+ SR602人体检测")
     print("==================================\n")
     
     # 创建核心1任务线程（先启动核心1，避免资源竞争）
     _thread.start_new_thread(core1_task, (global_uart, sensor, sensor_uart))
+    
+    # 启动SR602人体检测独立线程（运行在核心1，与定时器子系统同核心）
+    sr602_module.start_sr602_detect(global_uart, VERBOSE)
+    print("[SR602] 人体检测独立线程启动成功（优先运行在核心1）\n")
+    
     # 核心0任务直接在主线程运行（主线程默认绑定核心0，无需额外创建线程）
     core0_task(global_uart, sensor)
 

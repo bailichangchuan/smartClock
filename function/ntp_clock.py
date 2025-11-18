@@ -8,7 +8,7 @@ import utime
 # 配置文件导入：NTP服务器地址、时区偏移、请求超时（统一管理）
 from config import NTP_SERVER, TIMEZONE_OFFSET, NTP_TIMEOUT
 # 串口屏推送工具：封装串口屏数据上传逻辑（推送时间数据到指定控件）
-from util import sent_to_screen
+from ui import sent_to_screen
 
 # ===模块配置与全局变量=======
 # DEBUG日志控制开关：当前为模块级开关，建议后续与main.py全局VERBOSE对齐（保持原逻辑不修改）
@@ -52,8 +52,8 @@ def _ntp_to_local(ntp_ts):
     ntp_ts += int(TIMEZONE_OFFSET * 3600)
     # 常量定义：一天的总秒数（24*60*60=86400）
     sec_per_day = 86400
-    # 步骤2：拆分总秒数为“总天数”和“当日剩余秒数”
-    total_days = ntp_ts // sec_per_day
+    # 步骤2：拆分总秒数为“总天数”和“当日剩余秒数”（修改1：向上取整，避免跨天少算1天）
+    total_days = (ntp_ts + sec_per_day - 1) // sec_per_day
     remaining_secs = ntp_ts % sec_per_day
     
     # 步骤3：计算当日时分秒（拆分剩余秒数）
@@ -82,9 +82,9 @@ def _ntp_to_local(ntp_ts):
     month += 1  # 转换为实际月份（1-12）
     day = total_days + 1  # 转换为实际日期（1-31）
     
-    # 步骤6：计算星期（NTP起始日1900-01-01为星期一，总天数%7得到星期索引）
-    # 索引0=星期一，6=星期日，最终返回0-6的星期标识
-    weekday = (1 + ntp_ts // sec_per_day) % 7
+    # 步骤6：计算星期（修改2：用修正后的total_days，(total_days-1)%7确保索引正确）
+    # 逻辑：NTP起始日1900-01-01为周一 → total_days-1后取模，0=周一、2=周三
+    weekday = (total_days - 1) % 7
     # 返回本地时间元组（年, 月, 日, 时, 分, 秒, 星期）
     return (year, month, day, hours, mins, secs, weekday)
 

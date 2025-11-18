@@ -2,6 +2,8 @@
 # 时间工具模块：提供毫秒级延时（避免串口数据拥堵，确保指令完整发送）
 import utime
 
+VERBOSE = False  # 数据推送DEBUG输出控制开关
+
 # ===核心工具函数：串口屏数据推送=======
 def upload(
     uart,
