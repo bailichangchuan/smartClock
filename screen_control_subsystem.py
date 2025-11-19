@@ -20,7 +20,7 @@ from config import (
 )
 
 # 导入屏幕控制工具包 - 专业的指令处理团队
-from util.screen_command_listener import ScreenCommandListener
+from screen_control_tool.screen_command_listener import ScreenCommandListener
 
 
 def initialize_screen_communication():

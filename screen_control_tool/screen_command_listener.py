@@ -11,7 +11,7 @@ from config import SCREEN_DEBUG, GLOBAL_DEBUG
 # 导入功能服务模块
 from function import weather as weather_module
 from function import ntp_clock as ntp_module
-from util.screen_command_parser import ScreenCommandParser
+from screen_control_tool.screen_command_parser import ScreenCommandParser
 
 
 class ScreenCommandListener:
