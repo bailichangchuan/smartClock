@@ -12,6 +12,9 @@ from config import (
     DFPLAYER_DEFAULT_MODE,
     DFPLAYER_RETRY_COUNT,
     DFPLAYER_RETRY_INTERVAL,
+    DFPLAYER_AUTO_PLAY_ON_START,
+    DFPLAYER_AUTO_PLAY_DELAY,
+    DFPLAYER_START_DELAY,
     VERBOSE
 )
 
@@ -86,6 +89,9 @@ class DFPlayer:
         self.is_playing = False
         self.has_sd_card = False
         self.device_online = 0  # 设备在线状态
+        self.auto_play_enabled = DFPLAYER_AUTO_PLAY_ON_START
+        self.auto_play_delay = DFPLAYER_AUTO_PLAY_DELAY
+        self.start_delay = DFPLAYER_START_DELAY
         
         if self.verbose:
             print(f"[DFPlayer] 初始化DFPlayer Mini MP3模块")
@@ -129,11 +135,15 @@ class DFPlayer:
             print(f"[DFPlayer ERROR] 发送命令失败: {e}")
             return False
 
-    # ==================== 基础播放控制接口 ====================
+    # ==================== 核心初始化与自动播放接口 ====================
     
     def initialize(self):
-        """初始化DFPlayer模块"""
+        """初始化DFPlayer模块并处理自动播放"""
         print("[DFPlayer] 开始初始化DFPlayer Mini MP3模块...")
+        
+        # 等待硬件启动
+        print(f"[DFPlayer] 等待硬件启动 {self.start_delay} 秒...")
+        utime.sleep(self.start_delay)
         
         # 重置模块
         if not self._send_command(CMD_RESET):
@@ -150,12 +160,64 @@ class DFPlayer:
         self.set_playback_mode(DFPLAYER_DEFAULT_MODE)
         self.set_eq(EQ_NORMAL)
         
+        # 处理自动播放
+        if self.auto_play_enabled and self.has_sd_card:
+            print("[DFPlayer] 自动播放已启用，开始处理自动播放逻辑...")
+            self._handle_autoplay()
+        elif self.auto_play_enabled and not self.has_sd_card:
+            print("[DFPlayer WARNING] 自动播放已启用但未检测到SD卡，跳过自动播放")
+        else:
+            print("[DFPlayer] 自动播放已禁用")
+        
         if self.has_sd_card:
             print("[DFPlayer] 初始化完成 - SD卡就绪")
         else:
             print("[DFPlayer] 初始化完成 - 基本功能就绪（无SD卡）")
         
         return True
+    
+    def _handle_autoplay(self):
+        """处理自动播放逻辑"""
+        print(f"[DFPlayer] 自动播放配置：开机播放={self.auto_play_enabled}")
+        
+        if not self.auto_play_enabled:
+            print("[DFPlayer] 自动播放已禁用")
+            return False
+            
+        if not self.has_sd_card:
+            print("[DFPlayer ERROR] 无法自动播放：SD卡未插入")
+            return False
+        
+        # 等待自动播放延迟
+        print(f"[DFPlayer] 等待 {self.auto_play_delay} 秒后开始播放...")
+        utime.sleep(self.auto_play_delay)
+        
+        try:
+            # 确保设置循环模式为全部循环
+            print("[DFPlayer] 设置循环模式为全部循环")
+            success = self.set_playback_mode(PLAY_MODE_REPEAT_ALL)
+            if not success:
+                print("[DFPlayer WARNING] 设置循环模式失败，继续尝试播放")
+            
+            utime.sleep(0.5)
+            
+            # 从第一首开始播放
+            print("[DFPlayer] 开始播放第一首曲目")
+            success = self.play(1)
+            
+            if success:
+                print("✅ DFPlayer 自动播放启动成功 - 将连续播放所有曲目")
+                self.is_playing = True
+            else:
+                print("❌ DFPlayer 自动播放启动失败")
+            
+            return success
+            
+        except Exception as e:
+            print(f"[DFPlayer ERROR] 自动播放失败: {e}")
+            return False
+
+    # ==================== 基础播放控制接口 ====================
     
     def play(self, track=None):
         """
@@ -519,7 +581,7 @@ def init_dfplayer(uart, verbose=VERBOSE):
     """初始化DFPlayer模块"""
     global dfplayer_instance
     dfplayer_instance = DFPlayer(uart, verbose)
-    return dfplayer_instance
+    return dfplayer_instance.initialize()  # 修复：直接调用initialize
 
 # 基础播放控制接口
 def play(track=None): return dfplayer_instance.play(track) if dfplayer_instance else False

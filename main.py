@@ -38,9 +38,6 @@ from config import (
     DFPLAYER_TX_PIN,
     DFPLAYER_RX_PIN,
     DFPLAYER_BAUDRATE,
-    DFPLAYER_START_DELAY,
-    DFPLAYER_AUTO_PLAY_ON_START,        # 开机自动播放开关
-    DFPLAYER_AUTO_PLAY_DELAY,           # 自动播放延迟
     VERBOSE
 )
 
@@ -85,44 +82,6 @@ def core1_task(global_uart, sensor, sensor_uart):
     bind_core(1)
     # 启动定时器控制子系统（核心1持续运行）
     timer_control_subsystem.run_timer_control_subsystem(global_uart, sensor, sensor_uart, VERBOSE)
-
-# ===DFPlayer 自动播放函数=======
-def handle_dfplayer_autoplay(dfplayer):
-    """
-    处理DFPlayer自动播放逻辑 - 简化版本
-    :param dfplayer: DFPlayer实例
-    :return: 处理成功标识
-    """
-    if not dfplayer or not dfplayer.has_sd_card:
-        print("DFPlayer 无法自动播放：设备未就绪或SD卡未插入")
-        return False
-    
-    print(f"DFPlayer 自动播放配置：开机播放={DFPLAYER_AUTO_PLAY_ON_START}")
-    
-    # 检查是否启用自动播放
-    if not DFPLAYER_AUTO_PLAY_ON_START:
-        print("DFPlayer 自动播放已禁用")
-        return True
-    
-    # 等待自动播放延迟
-    print(f"DFPlayer 等待 {DFPLAYER_AUTO_PLAY_DELAY} 秒后开始播放...")
-    sleep(DFPLAYER_AUTO_PLAY_DELAY)
-    
-    try:
-        # 直接从第一首开始播放
-        print("DFPlayer 开始播放第一首曲目")
-        success = dfplayer.play(1)
-        
-        if success:
-            print("✅ 自动播放启动成功")
-        else:
-            print("❌ 自动播放启动失败")
-        
-        return success
-        
-    except Exception as e:
-        print(f"DFPlayer 自动播放失败: {e}")
-        return False
 
 # ===主函数（仅开机初始化，绑定双核心）=======
 def main():
@@ -242,28 +201,14 @@ def main():
             timeout=1000
         )
         
-        # 创建DFPlayer实例 - 启用详细日志以便调试
-        dfplayer = dfplayer_module.DFPlayer(uart=dfplayer_uart, verbose=True)
+        # 使用模块提供的初始化函数创建DFPlayer实例
+        dfplayer = dfplayer_module.init_dfplayer(uart=dfplayer_uart, verbose=True)
         
-        # 等待DFPlayer硬件初始化
-        print(f"[MAIN] 等待DFPlayer硬件启动 {DFPLAYER_START_DELAY} 秒...")
-        sleep(DFPLAYER_START_DELAY)
-        
-        # 初始化播放器
-        if dfplayer.initialize():
+        if dfplayer:
             print("✅ DFPlayer Mini MP3 初始化成功\n")
             
             # 打印详细状态
             print("[MAIN] DFPlayer当前状态:")
-            dfplayer.print_status()
-            
-            # 立即处理自动播放（此时其他硬件已稳定）
-            print("[MAIN] 立即处理自动播放...")
-            autoplay_success = handle_dfplayer_autoplay(dfplayer)
-            
-            # 最终状态确认
-            sleep(2)
-            print("[MAIN] DFPlayer最终状态:")
             dfplayer.print_status()
             
         else:
