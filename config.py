@@ -14,7 +14,7 @@ WIFI_PWD = "12345678"
 
 # ==================== 知心天气 API 配置（获取实时天气数据）====================
 # 天气API密钥：替换为你的知心天气开发者Key（需注册账号获取，https://www.seniverse.com/）
-SENIVERSE_KEY = "xxxxxx"
+SENIVERSE_KEY = "xxxxxxx"
 # 定位方式：可选值→"ip"（自动IP定位）、具体城市名（如"北京"、"上海"，需符合API格式）
 LOCATION = "ip"
 # 天气API域名：知心天气官方域名，无需修改
@@ -64,7 +64,7 @@ SERIAL_RX_PIN = 4
 
 # ==================== SR602人体红外传感器专用配置（屏幕亮度+渐变+检测）====================
 # SR602数据引脚：ESP32的GPIO引脚（需与硬件接线一致，避免冲突引脚）
-SR602_DATA_PIN = 18
+SR602_DATA_PIN = 0
 # 开机默认亮度：0-100（数值越大越亮，默认50，支持通过main.py外部修改）
 DEFAULT_SCREEN_BRIGHTNESS = 50
 # 渐变步长：每次亮度调整的幅度（数值越小渐变越细腻，默认5；建议范围2-10）
@@ -75,3 +75,41 @@ FADE_STEP = 1
 FADE_DELAY = 0.02
 # 检测间隔：SR602传感器检测人体的频率（单位：秒，默认2；建议范围1-5，平衡实时性和CPU占用）
 DETECT_INTERVAL = 2
+
+# ==================== TEMT6000环境光传感器配置（直接使用ADC值）====================
+# TEMT6000 ADC引脚：ESP32的ADC引脚（需与硬件接线一致，支持ADC的引脚如GPIO32-39）
+TEMT6000_ADC_PIN = 6
+# 环境光读取间隔：单位（秒），控制多久检测一次环境光并调节亮度（建议1-5秒）
+TEMT6000_READ_INTERVAL = 5
+# 最小ADC值：黑暗环境下的ADC读数（基于实际测量，典型值50-100）
+TEMT6000_MIN_ADC = 30
+# 最大ADC值：明亮环境下的ADC读数（基于实际测量，典型-值3000-3500）
+TEMT6000_MAX_ADC = 150
+# 最小屏幕亮度：0-100，环境光最暗时的屏幕亮度（建议10-20，保证可读性）
+TEMT6000_MIN_BRIGHTNESS = 5
+# 最大屏幕亮度：0-100，环境光最亮时的屏幕亮度（建议70-80，避免过亮）
+TEMT6000_MAX_BRIGHTNESS = 90
+# 平滑滤波系数：0.0-1.0，值越小滤波效果越强（减少亮度跳动，建议0.2-0.5）
+TEMT6000_SMOOTHING_FACTOR = 0.3
+
+# ==================== DFPlayer Mini MP3 播放器配置（软串口连接）====================
+# 软串口TX引脚：ESP32的GPIO引脚（连接DFPlayer的RX引脚）
+DFPLAYER_TX_PIN = 7
+# 软串口RX引脚：ESP32的GPIO引脚（连接DFPlayer的TX引脚）
+DFPLAYER_RX_PIN = 8
+# 软串口波特率：DFPlayer Mini固定为9600，无需修改
+DFPLAYER_BAUDRATE = 9600
+# 默认音量：0-30（0为静音，30为最大音量）
+DFPLAYER_DEFAULT_VOLUME = 20
+# 默认循环模式：0-全部循环, 1-文件夹循环, 2-单曲循环, 3-随机播放
+DFPLAYER_DEFAULT_MODE = 0
+# 启动播放延迟：单位（秒），DFPlayer初始化后等待稳定时间
+DFPLAYER_START_DELAY = 2
+# 设备检测重试次数：检测SD卡和设备连接的最大重试次数
+DFPLAYER_RETRY_COUNT = 3
+# 设备检测间隔：单位（秒），重试检测的时间间隔
+DFPLAYER_RETRY_INTERVAL = 1
+# 开机自动播放开关：True-开机自动播放，False-开机不播放
+DFPLAYER_AUTO_PLAY_ON_START = True
+# 自动播放延迟：单位（秒），开机后延迟几秒开始播放（等待系统稳定）
+DFPLAYER_AUTO_PLAY_DELAY = 3
