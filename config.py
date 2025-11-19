@@ -14,7 +14,7 @@ WIFI_PWD = "12345678"
 
 # ==================== 知心天气 API 配置（获取实时天气数据）====================
 # 天气API密钥：替换为你的知心天气开发者Key（需注册账号获取，https://www.seniverse.com/）
-SENIVERSE_KEY = "S-3j5IWHEJFx2GkZv"
+SENIVERSE_KEY = "ssssss"
 # 定位方式：可选值→"ip"（自动IP定位）、具体城市名（如"北京"、"上海"，需符合API格式）
 LOCATION = "ip"
 # 天气API域名：知心天气官方域名，无需修改
