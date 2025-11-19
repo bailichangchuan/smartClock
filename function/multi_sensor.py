@@ -1,278 +1,444 @@
-# ===导入依赖模块=======
-# UART串口读取工具类：负责串口数据帧查找、缓存管理（依赖util/uart_reader.py）
-from util.uart_reader import UARTReader
-# 配置文件导入：传感器读取间隔（统一管理，避免硬编码）
-from config import SENSOR_READ_INTERVAL
-# 时间工具模块：提供时间戳（间隔控制）和延时（等待逻辑）功能
+"""
+多传感器数据管家 - 智能时钟的环境感知中心
+功能：整合多种环境传感器数据，包括空气质量、温湿度等监测
+特点：统一数据解析、智能缓存管理、多屏显控支持
+"""
+
+# 导入时间管理模块 - 系统的时间感知能力
 import utime
-# 串口屏推送工具：封装串口屏数据上传逻辑（负责将传感器数据推送到屏幕控件）
+
+# 导入系统配置 - 使用面向用户的友好配置项
+from config import (
+    # 传感器配置
+    SENSOR_READ_INTERVAL, SENSOR_DEBUG, GLOBAL_DEBUG,
+    # 通信配置
+    SENSOR_UART_PORT, SENSOR_BAUD_RATE
+)
+
+# 导入UART通信管理 - 统一的数据收发系统
+from util.uart_reader import UARTReader
+from util.uart_senter import UARTSender
+
+# 导入屏幕通信工具 - 数据展示的桥梁
 from util import sent_to_screen
 
-# ===传感器通信协议配置=======
-# 数据帧头：传感器输出数据的固定起始标识（多字节帧头，与传感器协议一致）
-FRAME_HEADER = [0x3C, 0x02]
-# 有效数据帧总长度：完整数据帧的字节数（包含帧头、数据段、校验和，共17字节）
-FRAME_LENGTH = 17
-# 校验和偏移量：校验和字段在数据帧中的索引（第16字节，0开始计数）
-CHECKSUM_OFFSET = 16
 
-# ===多传感器数据处理核心类=======
 class MultiSensor:
     """
-    多传感器数据处理类：整合传感器数据读取、解析、打印、串口屏推送功能
-    核心特性：
-    1. 支持CO2、甲醛、TVOC、PM2.5、PM10、温度、湿度7类数据解析
-    2. 内置2秒读取间隔控制（避免频繁通信）、5秒帧查找超时（防止阻塞）
-    3. 校验和验证（确保数据完整性）、读写前后缓存清空（避免数据干扰）
-    4. 服从全局VERBOSE开关，统一控制DEBUG日志输出
-    5. 预留未推送数据的串口屏推送逻辑（注释形式，便于后续启用）
-    依赖：需外部传入传感器专用UART实例（main.py中初始化的串口1）
+    多传感器数据管家 - 环境监测的智能中枢
+    负责协调各种环境传感器的数据采集、解析和展示
+    就像一位细心的环境观察员，时刻关注着周围的空气质量状况
     """
     
-    # ===类初始化方法=======
-    def __init__(self, uart=None, verbose=True):
+    # 传感器通信协议配置 - 与硬件设备对话的语言规则
+    SENSOR_FRAME_HEADER = [0x3C, 0x02]  # 数据帧开始的特殊标记
+    SENSOR_FRAME_LENGTH = 17            # 完整数据包的长度（字节）
+    CHECKSUM_POSITION = 16              # 数据校验码的位置
+    
+    def __init__(self, uart_manager=None, verbose=None):
         """
-        初始化多传感器处理实例
-        :param uart: 传感器专用UART实例（main.py中初始化的machine.UART对象）
-        :param verbose: DEBUG日志控制开关（接收main.py全局VERBOSE参数）
-        初始化逻辑：
-        1. 接收全局DEBUG控制开关，统一管控当前类所有日志输出
-        2. 初始化UARTReader实例（串口数据读取核心）
-        3. 初始化读取间隔控制时间戳（避免频繁读取）
-        4. 初始化所有数据缓存（已推送/未推送数据，避免重复推送）
-        5. 校验UART实例有效性，输出初始化成功/失败日志（受VERBOSE控制）
+        初始化多传感器系统，建立与环境监测设备的通信
+        
+        参数说明：
+        - uart_manager: UART通信管理器（包含reader和sender）
+        - verbose: 详细日志开关（如果为None，使用配置中的SENSOR_DEBUG）
         """
-        # 接收全局DEBUG控制开关（来自main.py，统一管控[Sensor]前缀日志）
-        self.verbose = verbose
-        # UART数据读取实例：封装串口帧查找、缓存管理逻辑
-        self.uart_reader = None
-        # 读取间隔控制：记录上一次读取时间戳（控制2秒间隔）
-        self.last_read = 0
-        # 数据缓存：记录上一次推送至串口屏的数据（避免重复推送）
-        self.last_pm25 = None          # PM2.5缓存（已推送）
-        self.last_co2 = None           # CO2缓存（已推送）
-        self.last_tvoc = None          # TVOC缓存（已推送）
-        self.last_formaldehyde = None  # 甲醛缓存（未推送，预留）
-        self.last_pm10 = None          # PM10缓存（未推送，预留）
-        self.last_temperature = None   # 温度缓存（未推送，预留）
-        self.last_humidity = None      # 湿度缓存（未推送，预留）
+        # 设置调试模式：优先使用参数，其次使用配置开关
+        self.verbose = verbose if verbose is not None else SENSOR_DEBUG
         
-        try:
-            # 校验UART实例有效性（必须传入，否则无法与传感器通信）
-            if uart is None:
-                raise ValueError("必须传入传感器专用的UART实例（需在main中初始化串口1）")
-            # 初始化UARTReader：传入传感器UART实例和DEBUG开关
-            self.uart_reader = UARTReader(uart=uart, verbose=verbose)
-            # DEBUG日志：仅VERBOSE=True时输出初始化成功信息
-            if self.verbose:
-                print("[Sensor] 传感器处理实例初始化完成（使用main传入的串口1）")
+        # 数据读取器 - 专门负责从传感器接收数据
+        self.data_reader = None
         
-        except Exception as e:
-            # DEBUG日志：仅VERBOSE=True时输出初始化失败原因
-            if self.verbose:
-                print(f"[Sensor] 初始化失败：{str(e)}")
+        # 数据发送器 - 专门负责向传感器发送指令（预留功能）
+        self.data_sender = None
+        
+        # 时间控制 - 记录上次数据读取时间，避免过于频繁的请求
+        self.last_read_time = 0
+        
+        # 数据缓存 - 记录已发送到屏幕的数据，避免重复传输
+        self.screen_data_cache = {
+            'pm25': None,      # 细颗粒物浓度
+            'co2': None,       # 二氧化碳浓度  
+            'tvoc': None,      # 总挥发性有机物
+            'formaldehyde': None,  # 甲醛浓度（预留）
+            'pm10': None,      # 可吸入颗粒物（预留）
+            'temperature': None,   # 温度（预留）
+            'humidity': None      # 湿度（预留）
+        }
+        
+        # 建立传感器通信连接
+        self._setup_sensor_communication(uart_manager)
+        
+        if self.verbose:
+            print("[多传感器] 环境监测系统初始化完成")
 
-    # ===核心方法：传感器数据读取与解析全流程=======
-    def read_sensor_data(self, screen_uart, force=False):
+    def _setup_sensor_communication(self, uart_manager):
         """
-        传感器数据读取、解析、验证、推送全流程
-        :param screen_uart: 串口屏专用UART实例（main.py中的串口2，用于数据推送）
-        :param force: 强制读取标识（True=忽略2秒间隔，立即读取；False=遵循间隔）
-        :return: 无返回值（解析成功自动推送至串口屏，失败输出日志）
-        核心流程：
-        1. 实例就绪校验（UARTReader、串口屏UART必须就绪）
-        2. 读取间隔控制（force=False时，确保2秒内仅读取一次）
-        3. 读取前缓存清空（避免旧数据干扰）
-        4. 5秒总超时查找有效数据帧（循环调用UARTReader.find_data_frame）
-        5. 校验和验证（确保数据传输无错误）
-        6. 数据解析（拼接高低字节、处理温度正负、计算各参数值）
-        7. 数据打印（控制台输出所有解析结果）
-        8. 串口屏推送（已启用参数直接推送，未启用参数预留注释）
-        9. 解析成功后缓存清空（避免残留数据）
-        10. 异常处理（捕获所有异常，清空缓存，更新读取时间戳）
+        建立与多传感器设备的通信连接
+        为环境数据采集准备好通信通道
         """
-        # 校验核心实例就绪状态（UARTReader=传感器通信，screen_uart=串口屏通信）
-        if not self.uart_reader or not screen_uart:
+        try:
+            if uart_manager is None:
+                raise ValueError("需要传入UART通信管理器来建立传感器连接")
+            
+            # 从通信管理器中获取数据读取器
+            if 'reader' in uart_manager and uart_manager['reader'] is not None:
+                self.data_reader = uart_manager['reader']
+            else:
+                raise ValueError("UART管理器中未找到有效的数据读取器")
+            
+            # 从通信管理器中获取数据发送器（可选功能）
+            if 'sender' in uart_manager and uart_manager['sender'] is not None:
+                self.data_sender = uart_manager['sender']
+            
             if self.verbose:
-                print("[Sensor] 数据读取失败：UARTReader实例或串口屏UART未就绪")
-            return
+                print("[多传感器] 传感器通信通道建立成功")
+                
+        except Exception as e:
+            print(f"❌ 多传感器通信建立失败: {e}")
+            if self.verbose:
+                print("[多传感器] 系统将在无传感器数据模式下运行")
+
+    def read_sensor_data(self, screen_uart, force_refresh=False):
+        """
+        读取并处理多传感器数据
+        从环境监测设备获取最新数据，并更新显示
         
-        # 读取间隔控制（非强制模式下，2秒内仅允许读取一次）
-        current_time = utime.time()
-        if not force:
-            # 计算剩余间隔时间（上一次读取时间+2秒 - 当前时间）
-            interval_remaining = self.last_read + 2 - current_time
-            if interval_remaining > 0:
-                if self.verbose:
-                    print(f"[Sensor] 未到2秒读取间隔（剩余{interval_remaining:.1f}秒），跳过本次读取")
-                return
+        参数说明：
+        - screen_uart: 屏幕通信实例（用于更新显示）
+        - force_refresh: 强制刷新标志（忽略时间间隔限制）
+        """
+        # 检查系统就绪状态
+        if not self._check_system_ready(screen_uart):
+            return False
+        
+        # 检查读取时间间隔（避免过于频繁请求数据）
+        if not self._check_read_interval(force_refresh):
+            return False
+        
+        if self.verbose:
+            print("[多传感器] 开始读取环境传感器数据...")
         
         try:
-            # 读取前清空缓存（软件+硬件缓存，避免旧数据干扰新数据解析）
+            # 清空数据缓存，准备接收新数据
+            self.data_reader.clear_buffers()
+            
+            # 从传感器读取原始数据帧
+            sensor_frame = self._read_sensor_frame()
+            if sensor_frame is None:
+                return False
+            
+            # 验证数据完整性（校验和检查）
+            if not self._validate_data_frame(sensor_frame):
+                return False
+            
+            # 解析传感器数据（将原始字节转换为有意义的数值）
+            parsed_data = self._parse_sensor_data(sensor_frame)
+            if parsed_data is None:
+                return False
+            
+            # 显示解析结果（控制台输出）
+            self._display_sensor_readings(parsed_data)
+            
+            # 更新屏幕显示（将数据发送到串口屏）
+            self._update_screen_display(screen_uart, parsed_data, force_refresh)
+            
+            # 完成读取，清空缓存准备下一次
+            self.data_reader.clear_buffers()
+            
             if self.verbose:
-                print("[Sensor] 开始读取传感器数据 → 清空历史缓存")
-            self.uart_reader.clear_buffer()
+                print("[多传感器] 环境数据读取和处理完成")
             
-            # 5秒总超时查找有效数据帧（循环查找，每次子超时0.5秒）
-            total_timeout = 5  # 总超时时间（秒）
-            start_find_time = utime.time()  # 查找开始时间戳
-            frame = None  # 存储找到的有效数据帧
-            while utime.time() - start_find_time < total_timeout:
-                # 调用UARTReader查找有效帧（帧头+固定长度匹配，子超时0.5秒）
-                frame = self.uart_reader.find_data_frame(FRAME_HEADER, FRAME_LENGTH, timeout=0.5)
-                if frame:  # 找到有效帧，跳出循环
-                    break
-                # DEBUG日志：仅VERBOSE=True时输出等待状态
+            return True
+            
+        except Exception as e:
+            print(f"❌ 传感器数据读取异常: {e}")
+            # 发生异常时也要清空缓存
+            if self.data_reader:
+                self.data_reader.clear_buffers()
+            return False
+
+    def _check_system_ready(self, screen_uart):
+        """
+        检查系统就绪状态
+        确保所有必要的组件都已准备就绪
+        """
+        if self.data_reader is None:
+            if self.verbose:
+                print("[多传感器] 数据读取器未就绪，跳过读取")
+            return False
+        
+        if screen_uart is None:
+            if self.verbose:
+                print("[多传感器] 屏幕通信未就绪，跳过读取")
+            return False
+        
+        return True
+
+    def _check_read_interval(self, force_refresh):
+        """
+        检查读取时间间隔
+        避免过于频繁地向传感器请求数据
+        """
+        current_time = utime.time()
+        time_since_last_read = current_time - self.last_read_time
+        
+        # 如果强制刷新或已达到读取间隔，允许读取
+        if force_refresh or time_since_last_read >= SENSOR_READ_INTERVAL:
+            self.last_read_time = current_time
+            return True
+        
+        # 时间间隔未到，跳过本次读取
+        if self.verbose:
+            remaining_time = SENSOR_READ_INTERVAL - time_since_last_read
+            print(f"[多传感器] 未到读取间隔，{remaining_time:.1f}秒后重试")
+        
+        return False
+
+    def _read_sensor_frame(self):
+        """
+        从传感器读取完整的数据帧
+        耐心等待并接收传感器发送的完整数据包
+        """
+        if self.verbose:
+            print("[多传感器] 等待传感器数据帧...")
+        
+        total_timeout = 5.0  # 总等待时间（秒）
+        start_time = utime.time()
+        
+        while utime.time() - start_time < total_timeout:
+            # 尝试查找符合格式的数据帧
+            data_frame = self.data_reader.find_data_frame(
+                frame_header=self.SENSOR_FRAME_HEADER,
+                frame_length=self.SENSOR_FRAME_LENGTH,
+                timeout=0.5  # 每次查找的超时时间
+            )
+            
+            if data_frame is not None:
                 if self.verbose:
-                    elapsed_time = utime.time() - start_find_time
-                    print(f"[Sensor] 未找到有效数据帧，继续等待（已耗时{elapsed_time:.1f}秒）")
-                utime.sleep(0.1)  # 短延时，降低CPU占用
+                    hex_data = data_frame.hex().upper()
+                    print(f"[多传感器] 找到有效数据帧: {hex_data}")
+                return data_frame
             
-            # 更新上一次读取时间戳（无论成功与否，避免重复触发）
-            self.last_read = current_time
-            # 超时未找到有效帧：输出日志并返回
-            if not frame:
-                if self.verbose:
-                    print(f"[Sensor] 5秒总超时未找到有效数据帧（下次将在2秒后重试）")
-                return
+            # 短暂休息，避免过度占用CPU
+            utime.sleep(0.1)
+        
+        # 超时未找到有效数据
+        if self.verbose:
+            print("[多传感器] 传感器数据读取超时")
+        return None
+
+    def _validate_data_frame(self, data_frame):
+        """
+        验证数据帧的完整性
+        通过校验和确保数据在传输过程中没有出错
+        """
+        # 计算校验和（数据帧前16字节的和，取低8位）
+        calculated_checksum = sum(data_frame[:self.CHECKSUM_POSITION]) & 0xFF
+        frame_checksum = data_frame[self.CHECKSUM_POSITION]
+        
+        if calculated_checksum == frame_checksum:
+            if self.verbose:
+                print(f"[多传感器] 数据校验通过 (0x{calculated_checksum:02X})")
+            return True
+        else:
+            print(f"❌ 数据校验失败: 计算值=0x{calculated_checksum:02X}, 接收值=0x{frame_checksum:02X}")
+            return False
+
+    def _parse_sensor_data(self, data_frame):
+        """
+        解析传感器数据帧
+        将原始的字节数据转换为有意义的物理量数值
+        """
+        try:
+            # 定义字节合并函数：将高低字节合并为16位整数
+            merge_bytes = lambda high_idx, low_idx: (data_frame[high_idx] << 8) | data_frame[low_idx]
             
-            # 校验和验证：确保数据传输过程无错误（和校验，仅校验低8位）
-            # 计算校验和：帧头到校验和前一字节的所有字节求和，与0xFF按位与
-            checksum_calc = sum(frame[:CHECKSUM_OFFSET]) & 0xFF
-            # 读取帧中校验和字段（第16字节）
-            checksum_frame = frame[CHECKSUM_OFFSET]
-            # 校验失败：输出日志、清空缓存并返回
-            if checksum_calc != checksum_frame:
-                if self.verbose:
-                    print(f"[Sensor] 数据校验失败：计算值0x{checksum_calc:02X}，帧中值0x{checksum_frame:02X}")
-                self.uart_reader.clear_buffer()
-                return
+            # 处理温度数据（支持负数）
+            temp_integer = data_frame[12]
+            if temp_integer & 0x80:  # 检查符号位
+                temp_integer = -(temp_integer & 0x7F)  # 负数处理
             
-            # 数据解析：从有效帧中提取各传感器参数（按传感器协议定义的字节位置）
-            # 匿名函数：拼接高低字节（高字节左移8位 + 低字节，得到16位数值）
-            merge = lambda h, l: (frame[h] << 8) | frame[l]
-            # 温度整数部分处理：最高位为1表示负数（补码逻辑）
-            temp_int = frame[12]
-            temp_int = -(temp_int & 0x7F) if (temp_int & 0x80) else temp_int
-            # 解析所有传感器数据（含已推送/未推送字段，单位转换后保留整数）
-            data = {
-                "co2": merge(2, 3),  # CO2浓度（ppm，无需单位转换）
-                "formaldehyde": round(merge(4, 5) / 100.0),  # 甲醛浓度（mg/m³，原始值/100取整）
-                "tvoc": round(merge(6, 7) / 100.0),  # TVOC浓度（mg/m³，原始值/100取整）
-                "pm2_5": merge(8, 9),  # PM2.5浓度（μg/m³，无需单位转换）
-                "pm10": merge(10, 11),  # PM10浓度（μg/m³，无需单位转换）
-                "temperature": round(temp_int + frame[13] * 0.1),  # 温度（℃，整数部分+小数部分*0.1取整）
-                "humidity": round(frame[14] + frame[15] * 0.1)  # 湿度（%RH，整数部分+小数部分*0.1取整）
+            # 解析所有传感器参数
+            sensor_data = {
+                "co2": merge_bytes(2, 3),           # 二氧化碳浓度 (ppm)
+                "formaldehyde": round(merge_bytes(4, 5) / 100.0),  # 甲醛浓度 (mg/m³)
+                "tvoc": round(merge_bytes(6, 7) / 100.0),          # TVOC浓度 (mg/m³)
+                "pm2_5": merge_bytes(8, 9),         # PM2.5浓度 (μg/m³)
+                "pm10": merge_bytes(10, 11),        # PM10浓度 (μg/m³)
+                "temperature": round(temp_integer + data_frame[13] * 0.1),  # 温度 (℃)
+                "humidity": round(data_frame[14] + data_frame[15] * 0.1)    # 湿度 (%RH)
             }
             
-            # 控制台打印所有解析数据（含未推送字段，便于调试和状态查看）
-            self._print_data(data)
-            # 推送已启用数据到串口屏（未启用字段预留注释，后续可直接启用）
-            self._send_to_screen(screen_uart, data, force)
+            if self.verbose:
+                print("[多传感器] 传感器数据解析完成")
             
-            # 解析成功后清空缓存（避免残留数据影响下一次读取）
-            if self.verbose:
-                print("[Sensor] 数据解析与推送完成 → 清空缓存")
-            self.uart_reader.clear_buffer()
-        
+            return sensor_data
+            
         except Exception as e:
-            # 捕获所有异常：输出日志、清空缓存、更新读取时间戳
-            if self.verbose:
-                print(f"[Sensor] 数据读取/解析异常：{str(e)}")
-            self.uart_reader.clear_buffer()
-            self.last_read = current_time
+            print(f"❌ 传感器数据解析失败: {e}")
+            return None
 
-    # ===辅助方法：控制台打印所有传感器数据=======
-    def _print_data(self, data):
+    def _display_sensor_readings(self, sensor_data):
         """
-        控制台打印所有解析后的传感器数据（含已推送/未推送字段）
-        :param data: 解析后的传感器数据字典（key为参数名，value为数值+单位已处理）
-        作用：直观展示传感器状态，便于调试（不受VERBOSE控制，必显核心数据）
+        在控制台显示传感器读数
+        为用户提供清晰的环境数据概览
         """
-        print("\n==================================")
-        print(" 传感器数据（有效帧解析结果）")
-        print("==================================")
-        print(f"CO2浓度：{data['co2']} ppm")
-        print(f"甲醛浓度：{data['formaldehyde']} mg/m³")
-        print(f"TVOC浓度：{data['tvoc']} mg/m³")
-        print(f"PM2.5浓度：{data['pm2_5']} μg/m³")
-        print(f"PM10浓度：{data['pm10']} μg/m³")
-        print(f"温度：{data['temperature']} ℃")
-        print(f"湿度：{data['humidity']} %RH")
-        print("==================================\n")
+        print("\n" + "="*50)
+        print("        环境传感器实时数据")
+        print("="*50)
+        print(f" 🌫️  空气质量:")
+        print(f"    • PM2.5: {sensor_data['pm2_5']} μg/m³")
+        print(f"    • PM10:  {sensor_data['pm10']} μg/m³")
+        print(f" 🌬️  气体浓度:")
+        print(f"    • CO2:   {sensor_data['co2']} ppm")
+        print(f"    • TVOC:  {sensor_data['tvoc']} mg/m³")
+        print(f"    • 甲醛:   {sensor_data['formaldehyde']} mg/m³")
+        print(f" 🌡️  环境条件:")
+        print(f"    • 温度:   {sensor_data['temperature']} ℃")
+        print(f"    • 湿度:   {sensor_data['humidity']} %RH")
+        print("="*50)
 
-    # ===核心方法：传感器数据推送至串口屏=======
-    def _send_to_screen(self, screen_uart, data, force=False):
+    def _update_screen_display(self, screen_uart, sensor_data, force_update):
         """
-        将传感器数据推送至串口屏指定控件（已启用3个字段，预留4个字段注释）
-        :param screen_uart: 串口屏专用UART实例（main.py中的串口2）
-        :param data: 解析后的传感器数据字典
-        :param force: 强制推送标识（True=忽略缓存，强制更新；False=仅数据变化时推送）
-        推送逻辑：
-        1. 已启用字段：PM2.5→t6、CO2→t7、TVOC→t8（串口屏控件名称需与硬件配置一致）
-        2. 预留字段：甲醛→t9、PM10→t10、温度→t11、湿度→t12（注释形式，启用时取消注释即可）
-        3. 重复推送控制：对比缓存值，数据变化或force=True时才推送（减少串口通信量）
-        4. DEBUG日志：仅VERBOSE=True时输出推送信息（受全局开关控制）
+        更新屏幕显示
+        将最新的环境数据发送到串口屏展示
         """
-
+        if self.verbose:
+            print("[多传感器] 更新屏幕环境数据显示...")
+        
+        # 短暂延迟，确保屏幕就绪
         utime.sleep_ms(50)
+        
+        # PM2.5数据显示（控件t6）
+        pm25_display = f"{sensor_data['pm2_5']} μg/m³"
+        if force_update or pm25_display != self.screen_data_cache['pm25']:
+            sent_to_screen.upload(screen_uart, pm25_display, control_name="t6", property_name="txt")
+            self.screen_data_cache['pm25'] = pm25_display
+            if self.verbose:
+                print(f"[多传感器] 更新PM2.5显示: {pm25_display}")
+        
+        # CO2浓度显示（控件t7）
+        co2_display = f"{sensor_data['co2']} ppm"
+        if force_update or co2_display != self.screen_data_cache['co2']:
+            sent_to_screen.upload(screen_uart, co2_display, control_name="t7", property_name="txt")
+            self.screen_data_cache['co2'] = co2_display
+            if self.verbose:
+                print(f"[多传感器] 更新CO2显示: {co2_display}")
+        
+        # TVOC浓度显示（控件t8）
+        tvoc_display = f"{sensor_data['tvoc']} mg/m³"
+        if force_update or tvoc_display != self.screen_data_cache['tvoc']:
+            sent_to_screen.upload(screen_uart, tvoc_display, control_name="t8", property_name="txt")
+            self.screen_data_cache['tvoc'] = tvoc_display
+            if self.verbose:
+                print(f"[多传感器] 更新TVOC显示: {tvoc_display}")
+        
+        # 其他传感器数据显示（预留功能，取消注释即可启用）
+        # 甲醛浓度显示（控件t9）
+        # formaldehyde_display = f"{sensor_data['formaldehyde']} mg/m³"
+        # if force_update or formaldehyde_display != self.screen_data_cache['formaldehyde']:
+        #     sent_to_screen.upload(screen_uart, formaldehyde_display, control_name="t9", property_name="txt")
+        #     self.screen_data_cache['formaldehyde'] = formaldehyde_display
+        
+        # PM10浓度显示（控件t10）
+        # pm10_display = f"{sensor_data['pm10']} μg/m³"
+        # if force_update or pm10_display != self.screen_data_cache['pm10']:
+        #     sent_to_screen.upload(screen_uart, pm10_display, control_name="t10", property_name="txt")
+        #     self.screen_data_cache['pm10'] = pm10_display
+        
+        # 温度显示（控件t11）
+        # temp_display = f"{sensor_data['temperature']} ℃"
+        # if force_update or temp_display != self.screen_data_cache['temperature']:
+        #     sent_to_screen.upload(screen_uart, temp_display, control_name="t11", property_name="txt")
+        #     self.screen_data_cache['temperature'] = temp_display
+        
+        # 湿度显示（控件t12）
+        # humidity_display = f"{sensor_data['humidity']} %RH"
+        # if force_update or humidity_display != self.screen_data_cache['humidity']:
+        #     sent_to_screen.upload(screen_uart, humidity_display, control_name="t12", property_name="txt")
+        #     self.screen_data_cache['humidity'] = humidity_display
 
-        # 1. 已启用：PM2.5浓度 → 串口屏控件t6（单位：μg/m³）
-        current_pm25 = f"{data['pm2_5']} μg/m³"
-        # 数据变化或强制推送时执行
-        if force or current_pm25 != self.last_pm25:
-            # 调用串口屏推送工具，更新控件t6的文本属性
-            sent_to_screen.upload(screen_uart, current_pm25, control_name="t6", property_name="txt")
-            # 更新缓存值，避免重复推送
-            self.last_pm25 = current_pm25
-            # DEBUG日志：仅VERBOSE=True时输出推送状态
-            if self.verbose:
-                print(f"[Sensor] 推送PM2.5数据到串口屏控件t6：{current_pm25}")
+    def get_system_status(self):
+        """
+        获取系统状态信息
+        用于监控和调试多传感器系统
+        """
+        return {
+            'data_reader_ready': self.data_reader is not None,
+            'data_sender_ready': self.data_sender is not None,
+            'last_read_time': self.last_read_time,
+            'verbose_mode': self.verbose,
+            'cache_size': len(self.screen_data_cache)
+        }
+
+
+# =============================================================================
+# 独立运行模式 - 多传感器系统的专用测试环境
+# 当直接运行这个文件时，会进入测试模式，方便单独测试传感器功能
+# =============================================================================
+if __name__ == "__main__":
+    """
+    多传感器系统独立测试模式
+    无需启动整个智能时钟系统，单独测试环境监测功能
+    """
+    print("\n" + "="*60)
+    print("  多传感器环境监测系统 - 独立测试模式")
+    print("="*60)
+    
+    def run_sensor_system_test():
+        """运行多传感器系统的基本功能测试"""
+        print("\n🧪 开始多传感器系统功能测试...")
         
-        # 2. 已启用：CO2浓度 → 串口屏控件t7（单位：ppm）
-        current_co2 = f"{data['co2']} ppm"
-        if force or current_co2 != self.last_co2:
-            sent_to_screen.upload(screen_uart, current_co2, control_name="t7", property_name="txt")
-            self.last_co2 = current_co2
-            if self.verbose:
-                print(f"[Sensor] 推送CO2数据到串口屏控件t7：{current_co2}")
+        # 创建模拟UART管理器用于测试
+        class MockUARTManager:
+            """模拟UART管理器 - 用于测试通信功能"""
+            def __init__(self):
+                self.reader = None
+                self.sender = None
         
-        # 3. 已启用：TVOC浓度 → 串口屏控件t8（单位：mg/m³）
-        current_tvoc = f"{data['tvoc']} mg/m³"
-        if force or current_tvoc != self.last_tvoc:
-            sent_to_screen.upload(screen_uart, current_tvoc, control_name="t8", property_name="txt")
-            self.last_tvoc = current_tvoc
-            if self.verbose:
-                print(f"[Sensor] 推送TVOC数据到串口屏控件t8：{current_tvoc}")
+        # 创建模拟屏幕UART用于测试
+        class MockScreenUART:
+            """模拟屏幕UART - 用于测试数据显示"""
+            def write(self, data):
+                if SENSOR_DEBUG:
+                    print(f"[模拟屏幕] 接收数据: {data[:30]}...")
         
-        # 4. 预留：甲醛浓度 → 串口屏控件t9（启用时取消以下注释，需确保控件t9存在）
-        # current_formaldehyde = f"{data['formaldehyde']} mg/m³"
-        # if force or current_formaldehyde != self.last_formaldehyde:
-        #     sent_to_screen.upload(screen_uart, current_formaldehyde, control_name="t9", property_name="txt")
-        #     self.last_formaldehyde = current_formaldehyde
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送甲醛数据到串口屏控件t9：{current_formaldehyde}")
+        print("1. 测试多传感器系统初始化...")
+        mock_uart_manager = MockUARTManager()
+        sensor_system = MultiSensor(uart_manager=mock_uart_manager, verbose=True)
         
-        # 5. 预留：PM10浓度 → 串口屏控件t10（启用时取消以下注释）
-        # current_pm10 = f"{data['pm10']} μg/m³"
-        # if force or current_pm10 != self.last_pm10:
-        #     sent_to_screen.upload(screen_uart, current_pm10, control_name="t10", property_name="txt")
-        #     self.last_pm10 = current_pm10
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送PM10数据到串口屏控件t10：{current_pm10}")
+        print("2. 测试系统状态查询...")
+        status = sensor_system.get_system_status()
+        print(f"   系统状态: {status}")
         
-        # 6. 预留：温度 → 串口屏控件t11（启用时取消以下注释）
-        # current_temperature = f"{data['temperature']} ℃"
-        # if force or current_temperature != self.last_temperature:
-        #     sent_to_screen.upload(screen_uart, current_temperature, control_name="t11", property_name="txt")
-        #     self.last_temperature = current_temperature
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送温度数据到串口屏控件t11：{current_temperature}")
+        print("3. 测试屏幕通信模拟...")
+        mock_screen = MockScreenUART()
         
-        # 7. 预留：湿度 → 串口屏控件t12（启用时取消以下注释）
-        # current_humidity = f"{data['humidity']} %RH"
-        # if force or current_humidity != self.last_humidity:
-        #     sent_to_screen.upload(screen_uart, current_humidity, control_name="t12", property_name="txt")
-        #     self.last_humidity = current_humidity
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送湿度数据到串口屏控件t12：{current_humidity}")
+        print("4. 测试数据读取流程（模拟环境）...")
+        # 注意：由于没有真实的传感器硬件，实际数据读取会失败
+        # 但这可以测试系统的错误处理能力
+        try:
+            result = sensor_system.read_sensor_data(mock_screen, force_refresh=True)
+            print(f"   数据读取结果: {'成功' if result else '失败（预期中）'}")
+        except Exception as e:
+            print(f"   数据读取异常: {e}")
+        
+        print("\n🎉 多传感器系统基本功能测试完成")
+        return True
+    
+    try:
+        # 运行测试
+        success = run_sensor_system_test()
+        
+        if success:
+            print("\n✅ 多传感器系统独立测试通过")
+        else:
+            print("\n❌ 多传感器系统测试失败")
+            
+    except Exception as e:
+        print(f"\n💥 测试过程中发生异常: {e}")
+        import sys
+        sys.print_exception(e)
+    
+    print("\n👋 多传感器环境监测系统测试结束")

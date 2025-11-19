@@ -1,206 +1,408 @@
-# ===导入依赖模块=======
-# 网络通信模块：提供Socket接口，用于发送HTTP请求（天气API调用）
+"""
+天气信息服务系统 - 智能时钟的天气情报员
+功能：从互联网获取实时天气信息，为用户提供准确的环境状况
+特点：智能定位、自动更新、多数据展示、优雅降级
+"""
+
+# 导入网络通信模块 - 与天气服务器对话的桥梁
 import usocket as socket
-# JSON解析模块：用于解析天气API返回的JSON格式数据
 import ujson as json
-# 时间工具模块：提供毫秒级延时（异常处理中防抖）
 import utime
-# 配置文件导入：天气API域名和路径（统一管理，便于修改）
-from config import API_DOMAIN, API_PATH
-# 串口屏推送工具：封装串口屏数据上传逻辑（推送天气数据到指定控件）
+
+# 导入系统配置 - 使用面向用户的友好配置项
+from config import (
+    # 天气服务配置
+    WEATHER_API_KEY, WEATHER_LOCATION, WEATHER_UPDATE_INTERVAL,
+    WEATHER_DEBUG, GLOBAL_DEBUG,
+    # 网络配置
+    WIFI_TIMEOUT
+)
+
+# 导入屏幕通信工具 - 天气信息展示的窗口
 from util import sent_to_screen
 
-# ===模块配置与全局缓存=======
-# DEBUG日志控制开关：当前为模块级开关，建议后续与main.py全局VERBOSE对齐（保持原逻辑不修改）
-# 作用：控制API请求/响应的DEBUG日志输出，True启用，False关闭
-VERBOSE = False
 
-# 天气数据缓存：记录上一次推送至串口屏的数据（避免重复推送，减少串口通信量）
-last_city = None          # 上一次推送的城市名称
-last_weather = None       # 上一次推送的天气状况（如“晴”“阴”）
-last_temperature = None   # 上一次推送的温度（含单位，如“25℃”）
-
-# ===辅助函数：天气API HTTP GET请求=======
-def weather_get(domain, path, timeout=10):
+class WeatherService:
     """
-    向天气API发送HTTP GET请求，获取原始响应数据
-    :param domain: API域名（如config中配置的API_DOMAIN）
-    :param path: API请求路径（如config中配置的API_PATH）
-    :param timeout: 网络请求超时时间（单位：秒，默认10秒）
-    :return: API响应体（JSON字符串）/ None（请求失败/响应格式错误）
-    核心逻辑：
-    1. 创建TCP Socket实例，设置超时时间
-    2. 连接API服务器（80端口，HTTP协议默认端口）
-    3. 构造标准HTTP GET请求头（指定Host、Connection、Accept等字段）
-    4. 发送请求并接收响应数据（分段接收，拼接完整响应）
-    5. 关闭Socket连接，解析响应头和响应体
-    6. 校验响应状态码（仅200 OK时返回响应体，其他情况返回None）
-    7. 异常处理：捕获网络异常、请求异常，输出错误信息
+    天气信息服务 - 智能时钟的天气情报专家
+    负责从云端获取最新天气数据，让用户随时了解室外环境状况
+    就像一位贴心的气象播报员，时刻关注天气变化
     """
-    try:
-        # 创建TCP Socket实例（默认AF_INET，SOCK_STREAM）
-        sock = socket.socket()
-        # 设置Socket超时时间（避免网络阻塞导致程序卡死）
-        sock.settimeout(timeout)
-        # 连接API服务器（域名+80端口，HTTP协议标准）
-        sock.connect((domain, 80))
-        
-        # 构造HTTP GET请求头（符合HTTP 1.1协议规范）
-        request = (
-            f"GET {path} HTTP/1.1\r\n"
-            f"Host: {domain}\r\n"
-            "Connection: close\r\n"
-            "Accept: application/json,*/*\r\n\r\n"
-        )
-        # DEBUG日志：仅VERBOSE=True时输出发送的请求内容
-        if VERBOSE:
-            print("天气API发送请求：\n", request)
-        
-        # 发送请求：编码为UTF-8字节串后发送
-        sock.send(request.encode("utf-8"))
-        
-        # 接收响应：分段读取（每次1024字节），拼接完整响应数据
-        response_data = b""
-        while data := sock.recv(1024):
-            response_data += data
-        # 关闭Socket连接，释放网络资源
-        sock.close()
-        
-        # 响应数据解码：UTF-8格式，忽略无法解码的字符（避免解析失败）
-        response_str = response_data.decode("utf-8", "ignore")
-        # 校验响应格式：必须包含“\r\n\r\n”（响应头与响应体分隔符）
-        if "\r\n\r\n" not in response_str:
-            print("天气API响应格式错误：未找到响应头与响应体分隔符")
-            return None
-        
-        # 拆分响应头和响应体（仅拆分一次，避免多分隔符干扰）
-        headers, body = response_str.split("\r\n\r\n", 1)
-        # DEBUG日志：仅VERBOSE=True时输出响应头和前300字节响应体（避免日志过长）
-        if VERBOSE:
-            print("天气API响应头：", headers)
-            print("天气API响应体（前300字节）：", body[:300])
-        
-        # 校验响应状态码：仅“HTTP/1.1 200 OK”表示请求成功
-        if "HTTP/1.1 200 OK" in headers:
-            if VERBOSE:
-                print("天气API请求成功！")
-            return body  # 返回响应体（JSON字符串）
-        else:
-            # 提取状态码（响应头第一行第二个字段），输出错误信息
-            status_code = headers.split()[1]
-            print(f"天气API请求失败，状态码：{status_code}")
-            return None
     
-    # 捕获网络异常（如超时、连接失败等）
-    except OSError as e:
-        print(f"天气API网络异常：{type(e).__name__} -> {e}")
-    # 捕获其他通用异常（如编码错误、数据接收异常等）
-    except Exception as e:
-        print(f"天气API HTTP请求错误：{type(e).__name__} -> {e}")
-    # 所有异常情况下返回None
-    return None
+    def __init__(self, verbose=None):
+        """
+        初始化天气信息服务
+        
+        参数说明：
+        - verbose: 详细日志开关（如果为None，使用配置中的WEATHER_DEBUG）
+        """
+        # 设置调试模式：优先使用参数，其次使用配置开关
+        self.verbose = verbose if verbose is not None else WEATHER_DEBUG
+        
+        # 显示缓存 - 记录已发送到屏幕的天气数据，避免重复传输
+        self.display_cache = {
+            'city': None,        # 上一次显示的城市
+            'weather': None,     # 上一次显示的天气状况
+            'temperature': None  # 上一次显示的温度
+        }
+        
+        # 构建天气API请求路径
+        self.api_path = f"/v3/weather/now.json?key={WEATHER_API_KEY}&location={WEATHER_LOCATION}&language=zh-Hans&unit=c"
+        self.api_domain = "api.seniverse.com"
+        
+        if self.verbose:
+            print("[天气服务] 天气信息服务初始化完成")
 
-# ===核心函数：按IP定位获取天气并推送至串口屏=======
-def get_weather_by_ip(uart, force=False):
-    """
-    按IP自动定位获取实时天气，推送至串口屏指定控件（t3=城市、t4=天气、t5=温度）
-    :param uart: 串口屏专用UART实例（main.py中的串口2，用于数据推送）
-    :param force: 强制更新标识（True=忽略数据变化检测，强制推送；False=仅数据变化时推送）
-    :return: 无返回值（成功推送至串口屏，失败输出错误信息）
-    核心逻辑：
-    1. 调用weather_get获取API响应（JSON字符串）
-    2. 无响应处理：force=True时用缓存推送，否则返回
-    3. JSON解析：提取城市、天气状况、温度、最后更新时间
-    4. 控制台打印天气信息（必显，便于用户查看）
-    5. 串口屏推送：按控件映射推送，仅数据变化或force=True时执行
-    6. 异常处理：JSON解析失败、字段缺失、通用异常，分别处理并推送占位符（force=True时）
-    """
-    # 引用模块级全局缓存变量（记录上一次推送数据）
-    global last_city, last_weather, last_temperature
-    try:
-        # 调用API请求函数，获取JSON格式响应体
-        json_str = weather_get(API_DOMAIN, API_PATH)
-        if not json_str:  # API无响应（返回None）
-            # 强制更新时：若有缓存数据，用缓存推送至串口屏
-            if force and last_city is not None:
-                print("强制更新天气（API无响应，使用缓存数据）")
-                sent_to_screen.upload(uart, last_city, control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, last_weather, control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, last_temperature, control_name="t5", property_name="txt")
-            # 非强制更新或无缓存，直接返回
+    def fetch_weather_data(self, screen_uart, force_refresh=False):
+        """
+        获取并显示天气信息
+        从云端天气服务获取最新数据，并更新屏幕显示
+        
+        参数说明：
+        - screen_uart: 屏幕通信实例
+        - force_refresh: 强制刷新标志（忽略缓存直接更新）
+        """
+        if self.verbose:
+            print("[天气服务] 开始获取天气信息...")
+        
+        print("🌤️  正在获取天气信息...")
+        
+        try:
+            # 从天气API获取原始数据
+            api_response = self._request_weather_api()
+            if api_response is None:
+                # API请求失败，使用缓存或占位符
+                self._handle_api_failure(screen_uart, force_refresh)
+                return
+            
+            # 解析天气数据
+            weather_info = self._parse_weather_data(api_response)
+            if weather_info is None:
+                # 数据解析失败，使用缓存或占位符
+                self._handle_parse_failure(screen_uart, force_refresh)
+                return
+            
+            # 显示天气信息（控制台输出）
+            self._display_weather_report(weather_info)
+            
+            # 更新屏幕显示
+            self._update_screen_display(screen_uart, weather_info, force_refresh)
+            
+            if self.verbose:
+                print("[天气服务] 天气信息获取和显示完成")
+            
+        except Exception as e:
+            print(f"❌ 天气服务异常: {e}")
+            self._handle_general_failure(screen_uart, force_refresh)
+
+    def _request_weather_api(self):
+        """
+        向天气API发送请求
+        与远程服务器通信，获取最新的天气数据
+        """
+        if self.verbose:
+            print(f"[天气服务] 连接天气API: {self.api_domain}")
+        
+        weather_socket = None
+        try:
+            # 创建TCP连接
+            weather_socket = socket.socket()
+            weather_socket.settimeout(WIFI_TIMEOUT)
+            
+            # 连接到天气服务器
+            weather_socket.connect((self.api_domain, 80))
+            
+            # 构建HTTP请求
+            http_request = (
+                f"GET {self.api_path} HTTP/1.1\r\n"
+                f"Host: {self.api_domain}\r\n"
+                "Connection: close\r\n"
+                "Accept: application/json,*/*\r\n\r\n"
+            )
+            
+            if self.verbose:
+                print(f"[天气服务] 发送HTTP请求: {http_request[:100]}...")
+            
+            # 发送请求
+            weather_socket.send(http_request.encode("utf-8"))
+            
+            # 接收响应
+            response_data = b""
+            while True:
+                chunk = weather_socket.recv(1024)
+                if not chunk:
+                    break
+                response_data += chunk
+            
+            # 关闭连接
+            weather_socket.close()
+            
+            # 解码响应
+            response_text = response_data.decode("utf-8", "ignore")
+            
+            if self.verbose:
+                print(f"[天气服务] 收到API响应，长度: {len(response_text)} 字符")
+            
+            # 分离HTTP头和响应体
+            if "\r\n\r\n" not in response_text:
+                print("❌ 天气API响应格式错误")
+                return None
+            
+            headers, response_body = response_text.split("\r\n\r\n", 1)
+            
+            # 检查HTTP状态码
+            if "HTTP/1.1 200 OK" not in headers:
+                status_code = headers.split()[1] if len(headers.split()) > 1 else "未知"
+                print(f"❌ 天气API请求失败，状态码: {status_code}")
+                return None
+            
+            if self.verbose:
+                print("[天气服务] API请求成功")
+            
+            return response_body
+            
+        except OSError as e:
+            print(f"❌ 天气API网络错误: {e}")
+            return None
+        except Exception as e:
+            print(f"❌ 天气API请求异常: {e}")
+            return None
+        finally:
+            # 确保socket连接被关闭
+            if weather_socket:
+                weather_socket.close()
+
+    def _parse_weather_data(self, api_response):
+        """
+        解析天气API响应数据
+        从JSON格式的响应中提取有用的天气信息
+        """
+        try:
+            if self.verbose:
+                print("[天气服务] 解析天气数据...")
+            
+            # 解析JSON响应
+            weather_data = json.loads(api_response)
+            
+            # 提取天气信息
+            location_data = weather_data["results"][0]
+            current_weather = location_data["now"]
+            
+            weather_info = {
+                "city": location_data["location"]["name"],
+                "weather": current_weather["text"],
+                "temperature": f"{current_weather['temperature']}℃",
+                "last_update": location_data["last_update"].split('+')[0]  # 移除时区信息
+            }
+            
+            if self.verbose:
+                print(f"[天气服务] 解析完成: {weather_info}")
+            
+            return weather_info
+            
+        except (ValueError, KeyError) as e:
+            print(f"❌ 天气数据解析失败: {e}")
+            if self.verbose:
+                print(f"[天气服务] 原始响应: {api_response[:200]}...")
+            return None
+        except Exception as e:
+            print(f"❌ 天气数据解析异常: {e}")
+            return None
+
+    def _display_weather_report(self, weather_info):
+        """
+        显示天气报告
+        在控制台以友好的格式展示天气信息
+        """
+        print("\n" + "="*50)
+        print("        实时天气报告")
+        print("="*50)
+        print(f" 🏙️  城市: {weather_info['city']}")
+        print(f" ☁️  天气: {weather_info['weather']}")
+        print(f" 🌡️  温度: {weather_info['temperature']}")
+        print(f" 📅 更新: {weather_info['last_update']}")
+        print("="*50)
+
+    def _update_screen_display(self, screen_uart, weather_info, force_update):
+        """
+        更新屏幕天气显示
+        将最新的天气信息发送到串口屏展示
+        """
+        if screen_uart is None:
+            if self.verbose:
+                print("[天气服务] 屏幕通信未就绪，无法更新天气显示")
             return
         
-        # 解析JSON响应体：转换为字典格式，提取关键字段
-        weather_data = json.loads(json_str)
-        result = weather_data["results"][0]  # 第一个结果集（IP定位对应的城市天气）
-        current_city = result["location"]["name"]  # 城市名称（如“香港”）
-        now = result["now"]  # 当前天气数据
-        current_weather = now["text"]  # 天气状况（如“晴”“多云”）
-        current_temperature = f"{now['temperature']}℃"  # 温度（拼接单位，如“25℃”）
-        last_update = result["last_update"].split('+')[0]  # 最后更新时间（去除时区信息）
+        if self.verbose:
+            print("[天气服务] 更新屏幕天气显示...")
         
-        # 控制台打印格式化天气信息（必显，直观展示查询结果）
-        weather_info = (
-            "\n==================================\n"
-            f"  城市：{current_city}\n"
-            f"  天气：{current_weather}\n"
-            f"  温度：{current_temperature}\n"
-            f" 最后更新：{last_update}\n"
-            "==================================\n"
-        )
-        print(weather_info)
+        # 短暂延迟，确保屏幕就绪
+        utime.sleep_ms(50)
         
-        # 推送1：城市名称 → 串口屏控件t3（仅数据变化或强制更新时推送）
-        if force or current_city != last_city:
-            sent_to_screen.upload(uart, current_city, control_name="t3", property_name="txt")
-            last_city = current_city  # 更新缓存，避免重复推送
+        # 更新城市显示（控件t3）
+        if force_update or weather_info['city'] != self.display_cache['city']:
+            sent_to_screen.upload(screen_uart, weather_info['city'], control_name="t3", property_name="txt")
+            self.display_cache['city'] = weather_info['city']
+            if self.verbose:
+                print(f"[天气服务] 更新城市显示: {weather_info['city']}")
         
-        # 推送2：天气状况 → 串口屏控件t4（仅数据变化或强制更新时推送）
-        if force or current_weather != last_weather:
-            sent_to_screen.upload(uart, current_weather, control_name="t4", property_name="txt")
-            last_weather = current_weather  # 更新缓存
+        # 更新天气状况显示（控件t4）
+        if force_update or weather_info['weather'] != self.display_cache['weather']:
+            sent_to_screen.upload(screen_uart, weather_info['weather'], control_name="t4", property_name="txt")
+            self.display_cache['weather'] = weather_info['weather']
+            if self.verbose:
+                print(f"[天气服务] 更新天气显示: {weather_info['weather']}")
         
-        # 推送3：温度 → 串口屏控件t5（仅数据变化或强制更新时推送）
-        if force or current_temperature != last_temperature:
-            sent_to_screen.upload(uart, current_temperature, control_name="t5", property_name="txt")
-            last_temperature = current_temperature  # 更新缓存
+        # 更新温度显示（控件t5）
+        if force_update or weather_info['temperature'] != self.display_cache['temperature']:
+            sent_to_screen.upload(screen_uart, weather_info['temperature'], control_name="t5", property_name="txt")
+            self.display_cache['temperature'] = weather_info['temperature']
+            if self.verbose:
+                print(f"[天气服务] 更新温度显示: {weather_info['temperature']}")
+
+    def _handle_api_failure(self, screen_uart, force_refresh):
+        """
+        处理API请求失败的情况
+        在无法获取新数据时，使用缓存数据或占位符
+        """
+        if self.verbose:
+            print("[天气服务] 处理API请求失败...")
+        
+        # 如果有缓存数据且强制刷新，使用缓存数据
+        if force_refresh and self.display_cache['city'] is not None:
+            print("⚠️ 使用缓存的天气数据")
+            self._update_screen_display(screen_uart, {
+                'city': self.display_cache['city'],
+                'weather': self.display_cache['weather'],
+                'temperature': self.display_cache['temperature']
+            }, True)
+        elif force_refresh:
+            # 没有缓存数据，使用占位符
+            print("⚠️ 使用占位符天气数据")
+            self._show_placeholder_data(screen_uart)
+
+    def _handle_parse_failure(self, screen_uart, force_refresh):
+        """
+        处理数据解析失败的情况
+        """
+        if self.verbose:
+            print("[天气服务] 处理数据解析失败...")
+        
+        if force_refresh:
+            self._show_placeholder_data(screen_uart)
+
+    def _handle_general_failure(self, screen_uart, force_refresh):
+        """
+        处理通用失败情况
+        """
+        if self.verbose:
+            print("[天气服务] 处理通用失败...")
+        
+        if force_refresh:
+            self._show_placeholder_data(screen_uart)
+
+    def _show_placeholder_data(self, screen_uart):
+        """
+        显示占位符数据
+        在无法获取真实天气数据时，显示友好的占位信息
+        """
+        if screen_uart is None:
+            return
+        
+        placeholder_data = {
+            'city': '未知',
+            'weather': '未知',
+            'temperature': '--℃'
+        }
+        
+        self._update_screen_display(screen_uart, placeholder_data, True)
+        
+        if self.verbose:
+            print("[天气服务] 显示占位符天气数据")
+
+    def get_service_status(self):
+        """
+        获取服务状态信息
+        用于监控和调试天气服务
+        """
+        return {
+            'cache_city': self.display_cache['city'],
+            'cache_weather': self.display_cache['weather'],
+            'cache_temperature': self.display_cache['temperature'],
+            'verbose_mode': self.verbose,
+            'api_location': WEATHER_LOCATION
+        }
+
+
+# 创建全局天气服务实例（兼容旧代码）
+_weather_service = WeatherService()
+
+# 兼容旧代码的全局函数
+def get_weather_by_ip(uart, force=False):
+    """获取天气信息（兼容旧代码接口）"""
+    _weather_service.fetch_weather_data(uart, force)
+
+
+# =============================================================================
+# 独立运行模式 - 天气服务的专用测试环境
+# 当直接运行这个文件时，会进入测试模式，方便单独测试天气功能
+# =============================================================================
+if __name__ == "__main__":
+    """
+    天气服务独立测试模式
+    无需启动整个智能时钟系统，单独测试天气信息功能
+    """
+    print("\n" + "="*60)
+    print("  天气信息服务系统 - 独立测试模式")
+    print("="*60)
     
-    # 异常1：JSON解析失败（如响应体格式错误、非JSON字符串）
-    except ValueError as e:
-        print(f"天气JSON解析失败：{e} | 响应片段：{json_str[:50]}")
-        # 强制更新时：用缓存或占位符推送
-        if force:
-            if last_city is not None:
-                # 有缓存：推送缓存数据
-                sent_to_screen.upload(uart, last_city, control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, last_weather, control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, last_temperature, control_name="t5", property_name="txt")
-            else:
-                # 无缓存：推送占位符（“未知”“--℃”）
-                sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
+    def run_weather_service_test():
+        """运行天气服务的基本功能测试"""
+        print("\n🧪 开始天气服务功能测试...")
+        
+        # 创建测试用的天气服务实例
+        weather_system = WeatherService(verbose=True)
+        
+        print("1. 测试天气服务初始化...")
+        status = weather_system.get_service_status()
+        print(f"   服务状态: {status}")
+        
+        print("2. 测试API路径构建...")
+        print(f"   API路径: {weather_system.api_path}")
+        
+        print("3. 测试屏幕显示功能...")
+        # 创建模拟屏幕UART用于测试
+        class MockScreenUART:
+            def write(self, data):
+                if WEATHER_DEBUG:
+                    print(f"[模拟屏幕] 接收天气数据: {data[:30]}...")
+        
+        mock_screen = MockScreenUART()
+        
+        print("4. 测试占位符显示...")
+        weather_system._show_placeholder_data(mock_screen)
+        
+        print("5. 测试天气数据获取（需要网络连接）...")
+        try:
+            weather_system.fetch_weather_data(mock_screen, force_refresh=True)
+        except Exception as e:
+            print(f"   天气获取测试异常: {e}")
+        
+        print("\n🎉 天气服务基本功能测试完成")
+        return True
     
-    # 异常2：数据字段缺失（如API响应结构变化，缺少预期字段）
-    except KeyError as e:
-        print(f"天气数据字段缺失：{e}")
-        # 强制更新或缓存与占位符不一致时，推送占位符
-        if force or "未知" != last_city:
-            sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
-            last_city = "未知"  # 更新缓存为占位符
-        if force or "未知" != last_weather:
-            sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
-            last_weather = "未知"  # 更新缓存
-        if force or "--℃" != last_temperature:
-            sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
-            last_temperature = "--℃"  # 更新缓存
-        utime.sleep_ms(50)  # 防抖延时，避免重复触发
-    
-    # 异常3：通用异常（如串口通信失败、其他未捕获错误）
+    try:
+        # 运行测试
+        success = run_weather_service_test()
+        
+        if success:
+            print("\n✅ 天气服务独立测试通过")
+        else:
+            print("\n❌ 天气服务测试失败")
+            
     except Exception as e:
-        print(f"天气查询异常：{type(e).__name__} -> {e}")
-        # 强制更新时：推送占位符
-        if force:
-            sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
-            sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
-            sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
+        print(f"\n💥 测试过程中发生异常: {e}")
+        import sys
+        sys.print_exception(e)
+    
+    print("\n👋 天气信息服务系统测试结束")
