@@ -124,9 +124,9 @@ def get_weather_by_ip(uart, force=False):
             # 强制更新时：若有缓存数据，用缓存推送至串口屏
             if force and last_city is not None:
                 print("强制更新天气（API无响应，使用缓存数据）")
-                sent_to_screen.upload(uart, last_city, control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, last_weather, control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, last_temperature, control_name="t5", property_name="txt")
+                sent_to_screen.upload(uart, last_city, control_name="t8", property_name="txt")
+                sent_to_screen.upload(uart, last_weather, control_name="t2", property_name="txt")
+                sent_to_screen.upload(uart, last_temperature, control_name="t3", property_name="txt")
             # 非强制更新或无缓存，直接返回
             return
         
@@ -152,17 +152,17 @@ def get_weather_by_ip(uart, force=False):
         
         # 推送1：城市名称 → 串口屏控件t3（仅数据变化或强制更新时推送）
         if force or current_city != last_city:
-            sent_to_screen.upload(uart, current_city, control_name="t3", property_name="txt")
+            sent_to_screen.upload(uart, current_city, control_name="t8", property_name="txt")
             last_city = current_city  # 更新缓存，避免重复推送
         
         # 推送2：天气状况 → 串口屏控件t4（仅数据变化或强制更新时推送）
         if force or current_weather != last_weather:
-            sent_to_screen.upload(uart, current_weather, control_name="t4", property_name="txt")
+            sent_to_screen.upload(uart, current_weather, control_name="t2", property_name="txt")
             last_weather = current_weather  # 更新缓存
         
         # 推送3：温度 → 串口屏控件t5（仅数据变化或强制更新时推送）
         if force or current_temperature != last_temperature:
-            sent_to_screen.upload(uart, current_temperature, control_name="t5", property_name="txt")
+            sent_to_screen.upload(uart, current_temperature, control_name="t3", property_name="txt")
             last_temperature = current_temperature  # 更新缓存
     
     # 异常1：JSON解析失败（如响应体格式错误、非JSON字符串）
@@ -172,27 +172,27 @@ def get_weather_by_ip(uart, force=False):
         if force:
             if last_city is not None:
                 # 有缓存：推送缓存数据
-                sent_to_screen.upload(uart, last_city, control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, last_weather, control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, last_temperature, control_name="t5", property_name="txt")
+                sent_to_screen.upload(uart, last_city, control_name="t8", property_name="txt")
+                sent_to_screen.upload(uart, last_weather, control_name="t2", property_name="txt")
+                sent_to_screen.upload(uart, last_temperature, control_name="t3", property_name="txt")
             else:
                 # 无缓存：推送占位符（“未知”“--℃”）
-                sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
-                sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
-                sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
+                sent_to_screen.upload(uart, "未知", control_name="t8", property_name="txt")
+                sent_to_screen.upload(uart, "未知", control_name="t2", property_name="txt")
+                sent_to_screen.upload(uart, "--℃", control_name="t3", property_name="txt")
     
     # 异常2：数据字段缺失（如API响应结构变化，缺少预期字段）
     except KeyError as e:
         print(f"天气数据字段缺失：{e}")
         # 强制更新或缓存与占位符不一致时，推送占位符
         if force or "未知" != last_city:
-            sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
+            sent_to_screen.upload(uart, "未知", control_name="t8", property_name="txt")
             last_city = "未知"  # 更新缓存为占位符
         if force or "未知" != last_weather:
-            sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
+            sent_to_screen.upload(uart, "未知", control_name="t2", property_name="txt")
             last_weather = "未知"  # 更新缓存
         if force or "--℃" != last_temperature:
-            sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
+            sent_to_screen.upload(uart, "--℃", control_name="t3", property_name="txt")
             last_temperature = "--℃"  # 更新缓存
         utime.sleep_ms(50)  # 防抖延时，避免重复触发
     
@@ -201,6 +201,6 @@ def get_weather_by_ip(uart, force=False):
         print(f"天气查询异常：{type(e).__name__} -> {e}")
         # 强制更新时：推送占位符
         if force:
-            sent_to_screen.upload(uart, "未知", control_name="t3", property_name="txt")
-            sent_to_screen.upload(uart, "未知", control_name="t4", property_name="txt")
-            sent_to_screen.upload(uart, "--℃", control_name="t5", property_name="txt")
+            sent_to_screen.upload(uart, "未知", control_name="t8", property_name="txt")
+            sent_to_screen.upload(uart, "未知", control_name="t2", property_name="txt")
+            sent_to_screen.upload(uart, "--℃", control_name="t3", property_name="txt")

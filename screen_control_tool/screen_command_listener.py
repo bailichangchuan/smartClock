@@ -46,20 +46,29 @@ def uart_listen_thread(uart, sensor):
                     # 核心状态输出（必显，告知用户检测到的操作）
                     print(f"检测到串口屏操作：页{page} → 控件{control}（按下，执行强制更新）")
                     
-                    # 指令映射1：页1-控件0 → 强制更新天气
-                    if page == 1 and control == 0:
-                        utime.sleep_ms(50)  # 防抖延时：避免指令误触发
-                        print("执行操作：强制更新天气数据...")
-                        # 调用天气模块强制更新（force=True：忽略缓存，实时请求）
-                        weather_module.get_weather_by_ip(uart, force=True)
                     
-                    # 指令映射2：页0-控件0 → 强制更新时间
-                    elif page == 0 and control == 0:
+                    # 指令映射1：页1-控件0 → 强制更新天气
+                    if page == 0 and control == 0:
                         utime.sleep_ms(50)  # 防抖延时
                         print("执行操作：强制更新串口屏时间...")
                         # 调用NTP模块强制更新时间（force=True：忽略缓存，实时校准推送）
                         ntp_module.send_time_to_serial_screen(uart, force=True)
-                    
+                        print("执行操作：强制更新天气数据...")
+                        # 调用天气模块强制更新（force=True：忽略缓存，实时请求）
+                        weather_module.get_weather_by_ip(uart, force=True)
+
+     
+                    # 指令映射2：页0-控件0 → 强制更新时间
+                    elif page == 0 and control == 0:
+                        '''
+                        utime.sleep_ms(50)  # 防抖延时
+                        print("执行操作：强制更新多功能传感器信息...")
+                        # 调用NTP模块强制更新时间（force=True：忽略缓存，实时校准推送）
+                        ntp_module.send_time_to_serial_screen(uart, force=True)
+                        print("执行操作：强制更新天气数据...")
+                        # 调用天气模块强制更新（force=True：忽略缓存，实时请求）
+                        weather_module.get_weather_by_ip(uart, force=True)
+'''
                     # 指令映射3：页2-控件0 → 强制更新空气质量（传感器数据）
                     elif page == 2 and control == 0:
                         utime.sleep_ms(50)  # 防抖延时

@@ -222,7 +222,7 @@ class MultiSensor:
         # 数据变化或强制推送时执行
         if force or current_pm25 != self.last_pm25:
             # 调用串口屏推送工具，更新控件t6的文本属性
-            sent_to_screen.upload(screen_uart, current_pm25, control_name="t6", property_name="txt")
+            sent_to_screen.upload(screen_uart, current_pm25, control_name="pm025", property_name="txt")
             # 更新缓存值，避免重复推送
             self.last_pm25 = current_pm25
             # DEBUG日志：仅VERBOSE=True时输出推送状态
@@ -232,7 +232,7 @@ class MultiSensor:
         # 2. 已启用：CO2浓度 → 串口屏控件t7（单位：ppm）
         current_co2 = f"{data['co2']} ppm"
         if force or current_co2 != self.last_co2:
-            sent_to_screen.upload(screen_uart, current_co2, control_name="t7", property_name="txt")
+            sent_to_screen.upload(screen_uart, current_co2, control_name="CO2", property_name="txt")
             self.last_co2 = current_co2
             if self.verbose:
                 print(f"[Sensor] 推送CO2数据到串口屏控件t7：{current_co2}")
@@ -262,17 +262,17 @@ class MultiSensor:
         #         print(f"[Sensor] 推送PM10数据到串口屏控件t10：{current_pm10}")
         
         # 6. 预留：温度 → 串口屏控件t11（启用时取消以下注释）
-        # current_temperature = f"{data['temperature']} ℃"
-        # if force or current_temperature != self.last_temperature:
-        #     sent_to_screen.upload(screen_uart, current_temperature, control_name="t11", property_name="txt")
-        #     self.last_temperature = current_temperature
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送温度数据到串口屏控件t11：{current_temperature}")
+        current_temperature = f"{data['temperature']} ℃"
+        if force or current_temperature != self.last_temperature:
+            sent_to_screen.upload(screen_uart, current_temperature, control_name="temp", property_name="txt")
+            self.last_temperature = current_temperature
+            if self.verbose:
+                print(f"[Sensor] 推送温度数据到串口屏控件t11：{current_temperature}")
         
         # 7. 预留：湿度 → 串口屏控件t12（启用时取消以下注释）
-        # current_humidity = f"{data['humidity']} %RH"
-        # if force or current_humidity != self.last_humidity:
-        #     sent_to_screen.upload(screen_uart, current_humidity, control_name="t12", property_name="txt")
-        #     self.last_humidity = current_humidity
-        #     if self.verbose:
-        #         print(f"[Sensor] 推送湿度数据到串口屏控件t12：{current_humidity}")
+        current_humidity = f"{data['humidity']} %RH"
+        if force or current_humidity != self.last_humidity:
+            sent_to_screen.upload(screen_uart, current_humidity, control_name="wwet", property_name="txt")
+            self.last_humidity = current_humidity
+            if self.verbose:
+                print(f"[Sensor] 推送湿度数据到串口屏控件t12：{current_humidity}")

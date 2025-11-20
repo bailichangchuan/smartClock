@@ -221,17 +221,17 @@ def send_time_to_serial_screen(uart, force=False):
     
     # 推送1：日期 → 串口屏控件t0（仅日期变化或强制更新时推送）
     if force or current_date != last_date:
-        sent_to_screen.upload(uart, current_date, control_name="t0", property_name="txt")
+        sent_to_screen.upload(uart, current_date, control_name="t1", property_name="txt")
         last_date = current_date  # 更新日期缓存，避免重复推送
     
     # 推送2：星期 → 串口屏控件t1（仅星期变化或强制更新时推送）
     if force or current_weekday != last_weekday:
         weekday_str = f"星期{current_weekday}"  # 拼接星期字符串（如“星期一”）
-        sent_to_screen.upload(uart, weekday_str, control_name="t1", property_name="txt")
+        sent_to_screen.upload(uart, weekday_str, control_name="t9", property_name="txt")
         last_weekday = current_weekday  # 更新星期缓存
     
     # 推送3：时间 → 串口屏控件t2（仅分钟变化或强制更新时推送，避免每秒重复）
     if force or current_minute_val != last_minute:
         time_str = f"{hour:02d}:{minute:02d}"  # 时间字符串（HH:MM，补零）
-        sent_to_screen.upload(uart, time_str, control_name="t2", property_name="txt")
+        sent_to_screen.upload(uart, time_str, control_name="t0", property_name="txt")
         last_minute = current_minute_val  # 更新分钟缓存
