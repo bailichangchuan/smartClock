@@ -1,194 +1,234 @@
-# ===程序主入口（仅开机运行一次初始化，绑定双核心）=======
-# 功能：保留开机日志、硬件初始化、核心绑定，不包含定时任务
-# 核心分配：核心0 → screen_control_subsystem，核心1 → timer_control_subsystem + SR602人体检测
+# ==================== 程序主入口文件 ====================
+# 这个文件是开机后第一个运行的代码，负责系统初始化和启动
+# 功能流程：初始化硬件 → 连接网络 → 启动双线程系统
+# 设计思路：只做一次准备，然后启动两个长期任务（屏幕控制 + 定时任务）
 
-# ===导入依赖模块=======
-# 硬件控制核心模块：提供UART串口、GPIO引脚等硬件操作接口
+# ==================== 导入必要工具 ====================
+# machine模块：硬件控制（串口、引脚）
 import machine
-# 时间工具模块：提供秒级延时功能
-from utime import sleep
-# 多线程模块：用于创建核心绑定的子线程（ESP32双核心支持）
+# time模块：延时函数
+import time
+# _thread模块：创建新线程（Pico和ESP32通用，MicroPython没有threading模块）
 import _thread
-# 网络工具模块：封装WiFi连接逻辑
-import util.network as net_util
-# NTP时钟模块：仅用于首次校准（定时校准迁移到timer子系统）
-import function.ntp_clock as ntp_module
-# 传感器功能模块：仅用于初始化（读取逻辑迁移到timer子系统）
-import function.multi_sensor as sensor_module
-# 串口屏控制子系统（核心0运行）
-import screen_control_subsystem
-# 定时器控制子系统（核心1运行）
-import timer_control_subsystem
-# SR602人体红外检测模块（独立线程，核心1运行）
-import function.sr602 as sr602_module
-# 配置文件导入：所有可配置参数
+
+# 导入功能模块（每个模块负责一个独立功能）
+import util.network as net_util          # WiFi连接功能
+
+# 关键修复：确保导入整个模块，避免函数调用失败
+import function.ntp_clock as ntp_module  # 网络时间同步（包含get_current_formatted_time）
+import function.air_quality_sensor as sensor_module  # 空气质量传感器
+import function.weather as weather_module  # 天气数据获取
+
+import screen_control_subsystem          # 屏幕指令处理
+import function.human_presence_sensor as sr602_module  # 人体检测
+
+# 从配置文件读取参数（包括所有VERBOSE开关）
 from config import (
-    SERIAL_PORT,
-    SERIAL_BAUD_RATE,
-    SERIAL_TX_PIN,
-    SERIAL_RX_PIN,
-    UART_NUM,
-    UART_BAUDRATE,
-    UART_TX_PIN,
-    UART_RX_PIN
+    SERIAL_PORT, SERIAL_BAUD_RATE, SERIAL_TX_PIN, SERIAL_RX_PIN,
+    UART_NUM, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN,
+    VERBOSE_MAIN, VERBOSE_SENSOR, VERBOSE_SR602,
+    WEATHER_REFRESH_INTERVAL,
+    NTP_CALIBRATION_HOURS,
+    SENSOR_READ_INTERVAL,
+    DETECT_INTERVAL
 )
 
-# ===全局配置（仅保留必要项）=======
-VERBOSE = False  # 全局DEBUG输出控制开关
-
-# ===核心绑定工具函数=======
-def bind_core(core_id):
+# ==================== 初始化区域（开机只运行一次） ====================
+def initialize_system():
     """
-    绑定线程到指定核心（ESP32支持核心0和核心1）
-    :param core_id: 核心编号（0或1）
-    :return: 绑定成功标识
+    开机初始化：像运动员比赛前的热身，只做一遍
+    步骤：连WiFi → 初始化串口 → 启动传感器 → 同步时间 → 强制推送所有数据
+    返回：三个硬件实例（屏幕串口、传感器、传感器串口）
     """
-    try:
-        # ESP32 MicroPython通过_thread.set_core()绑定核心（部分固件支持，若不支持会抛异常）
-        _thread.set_core(_thread.get_ident(), core_id)
-        print(f"线程绑定核心{core_id}成功")
-        return True
-    except AttributeError:
-        # 兼容不支持set_core()的固件：通过循环中强制指定核心逻辑（备选方案）
-        print(f"警告：当前固件不支持直接绑定核心，将通过任务调度优先占用核心{core_id}")
-        return False
-
-# ===子线程包装函数 - 核心0（screen_control_subsystem）=======
-def core0_task(global_uart, sensor):
-    """核心0专属任务：运行串口屏控制子系统"""
-    print("\n==================================")
-    print(" 核心0任务启动 - screen_control_subsystem")
-    print("==================================\n")
-    # 绑定核心0
-    bind_core(0)
-    # 启动串口屏控制子系统（核心0持续运行）
-    screen_control_subsystem.run_screen_control_subsystem(sensor)
-
-# ===子线程包装函数 - 核心1（timer_control_subsystem）=======
-def core1_task(global_uart, sensor, sensor_uart):
-    """核心1专属任务：运行定时器控制子系统"""
-    print("\n==================================")
-    print(" 核心1任务启动 - timer_control_subsystem")
-    print("==================================\n")
-    # 绑定核心1
-    bind_core(1)
-    # 启动定时器控制子系统（核心1持续运行）
-    timer_control_subsystem.run_timer_control_subsystem(global_uart, sensor, sensor_uart, VERBOSE)
-
-# ===主函数（仅开机初始化，绑定双核心）=======
-def main():
-    """程序主函数：仅执行开机初始化，启动双核心任务后挂起"""
-    # 局部变量（替代原全局变量，避免跨线程冲突）
-    global_uart = None        # 串口2实例（串口屏/天气/时间通信）
-    sensor = None             # 多传感器实例
-    sensor_uart = None        # 串口1实例（传感器专用）
+    print("="*50)
+    print(" 系统启动中... 正在初始化硬件")
+    print("="*50)
     
-    # 程序启动标识（必显）
-    print("==================================")
-    print(" 香港实时天气查询程序 - 启动成功")
-    print("==================================\n")
-    
-    # 1. WiFi连接（核心依赖，连接失败则退出）
-    print("==================================")
-    print(" WiFi连接 - 正在连接")
-    print("==================================\n")
+    # 1. 连接WiFi（没有网络就无法获取天气和时间）
+    print("\n[步骤1/5] 连接WiFi网络...")
     if not net_util.connect_wifi():
-        print("WiFi连接失败 程序退出")
-        return
-    print("WiFi连接成功\n")
+        print("❌ WiFi连接失败，程序无法继续运行")
+        return None, None, None   # 返回空表示失败
     
-    # 2. 串口2初始化（串口屏/天气/时间通信）
-    print("==================================")
-    print(" 串口2初始化（串口屏/天气/时间）")
-    print("==================================\n")
-    try:
-        global_uart = machine.UART(
-            SERIAL_PORT,
-            baudrate=SERIAL_BAUD_RATE,
-            tx=machine.Pin(SERIAL_TX_PIN),
-            rx=machine.Pin(SERIAL_RX_PIN),
-            bits=8,
-            parity=None,
-            stop=1,
-            timeout=100
-        )
-        if VERBOSE:
-            print(f"[MAIN DEBUG] 串口2初始化成功：端口{SERIAL_PORT} 波特率{SERIAL_BAUD_RATE}")
-        print("串口2初始化成功\n")
-    except Exception as e:
-        print(f"串口2初始化失败：{e}")
-        return
+    print("✅ WiFi连接成功！\n")
     
-    # 3. 串口1初始化（传感器专用）
-    print("==================================")
-    print(" 串口1初始化（传感器专用）")
-    print("==================================\n")
-    try:
-        sensor_uart = machine.UART(
-            UART_NUM,
-            baudrate=UART_BAUDRATE,
-            tx=machine.Pin(UART_TX_PIN),
-            rx=machine.Pin(UART_RX_PIN),
-            bits=8,
-            parity=None,
-            stop=1,
-            timeout=10
-        )
-        sensor_uart.write(b"")
-        if VERBOSE:
-            print(f"[MAIN DEBUG] 串口1初始化成功：端口{UART_NUM} 波特率{UART_BAUDRATE}")
-        print("串口1初始化成功\n")
-    except Exception as e:
-        print(f"串口1初始化失败：{e}")
-        sensor_uart = None
+    # 2. 初始化串口2（连接屏幕，用于显示数据）
+    print("[步骤2/5] 初始化屏幕串口...")
+    screen_uart = machine.UART(
+        SERIAL_PORT, baudrate=SERIAL_BAUD_RATE,
+        tx=machine.Pin(SERIAL_TX_PIN), rx=machine.Pin(SERIAL_RX_PIN),
+        bits=8, parity=None, stop=1, timeout=100
+    )
+    # 发送测试数据验证串口工作
+    test_cmd = "system_ready=1"
+    screen_uart.write(test_cmd.encode() + b'\xff\xff\xff')
     
-    # 4. 传感器实例初始化
-    print("==================================")
-    print(" 传感器初始化 - 启动中")
-    print("==================================\n")
-    try:
-        sensor = sensor_module.MultiSensor(uart=sensor_uart, verbose=VERBOSE)
-        print("传感器初始化成功\n")
-        # 启动后强制读取一次传感器数据（测试通信）
-        if VERBOSE and sensor and global_uart:
-            print("[MAIN TEST] 强制读取传感器数据...")
-            sensor.read_sensor_data(global_uart, force=True)
-    except Exception as e:
-        print(f"传感器初始化失败：{e}\n")
-        sensor = None
+    # 3. 初始化串口1（连接传感器，读取空气质量）
+    print("[步骤3/5] 初始化传感器串口...")
+    sensor_uart = machine.UART(
+        UART_NUM, baudrate=UART_BAUDRATE,
+        tx=machine.Pin(UART_TX_PIN), rx=machine.Pin(UART_RX_PIN),
+        bits=8, parity=None, stop=1, timeout=10
+    )
+    sensor_uart.write(b"")  # 清空串口缓存
     
-    # 5. NTP时钟首次校准（阻塞式，确保开机时间准确）
-    print("==================================")
-    print(" NTP时钟 - 首次校准中")
-    print("==================================\n")
-    while True:
+    # 4. 初始化传感器对象（包含TVOC/甲醛/温湿度等所有功能）
+    print("[步骤4/5] 初始化空气质量传感器...")
+    # 关键修复：传递VERBOSE_SENSOR开关
+    sensor = sensor_module.MultiSensor(uart=sensor_uart, verbose=VERBOSE_SENSOR)
+    
+    # 5. 同步网络时间（让系统知道现在几点）
+    print("[步骤5/5] 同步网络时间...")
+    ntp_attempts = 0
+    max_attempts = 5
+    while ntp_attempts < max_attempts:
         success, tz = ntp_module.sync_ntp_to_rtc()
         if success:
-            print(f"NTP校准成功 时区 UTC+{tz:.1f}\n")
+            # 关键修复：直接调用已导入的模块函数，确保函数存在
+            current_time = ntp_module.get_current_formatted_time()
+            print(f"   ✅ 时间校准成功：{current_time} (UTC+{tz:.1f})")
             break
-        if VERBOSE:
-            print("[MAIN DEBUG] NTP校准重试...")
-        sleep(2)
+        ntp_attempts += 1
+        print(f"   第{ntp_attempts}次校准失败，2秒后重试...")
+        time.sleep(2)
+    else:
+        print("⚠️  时间校准失败，但程序将继续运行（时间可能不准确）")
     
-    # 6. 启动双核心任务（核心0和核心1分别运行对应子系统）
-    print("==================================")
-    print(" 双核心任务启动 - 系统开始运行")
-    print("==================================\n")
-    print(f" 核心0：串口屏控制子系统（screen_control_subsystem）")
-    print(f" 核心1：定时器控制子系统（timer_control_subsystem）+ SR602人体检测")
-    print("==================================\n")
+    print("\n" + "="*50)
+    print(" 硬件初始化完成！")
+    print("="*50)
     
-    # 创建核心1任务线程（先启动核心1，避免资源竞争）
-    _thread.start_new_thread(core1_task, (global_uart, sensor, sensor_uart))
+    # 6. 开机强制推送所有数据（确保屏幕显示最新信息，非阻塞）
+    # 这个操作不影响主流程，使用try-except防止失败阻塞启动
+    print("\n[强制推送] 开机推送所有数据到屏幕...")
+    try:
+        if screen_uart and sensor_uart and sensor:
+            # 强制推送时间（NTP已校准）
+            ntp_module.send_time_to_serial_screen(screen_uart, force=True)
+            print("   ✅ 时间已推送")
+            
+            # 强制推送天气（立即获取最新数据）
+            weather_module.get_weather_by_ip(screen_uart, force=True)
+            print("   ✅ 天气已推送")
+            
+            # 强制推送传感器（读取当前环境数据）
+            sensor.read_sensor_data(screen_uart, force=True)
+            print("   ✅ 传感器数据已推送")
+    except Exception as e:
+        print(f"   ⚠️  强制推送部分失败：{e}（不影响主程序运行，已跳过）")
     
-    # 启动SR602人体检测独立线程（运行在核心1，与定时器子系统同核心）
-    sr602_module.start_sr602_detect(global_uart, VERBOSE)
-    print("[SR602] 人体检测独立线程启动成功（优先运行在核心1）\n")
-    
-    # 核心0任务直接在主线程运行（主线程默认绑定核心0，无需额外创建线程）
-    core0_task(global_uart, sensor)
+    return screen_uart, sensor, sensor_uart
 
-# ===程序启动入口=======
+# ==================== 定时任务区域（持续运行，永不停止） ====================
+def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_lock):
+    """
+    定时任务：像闹钟一样，每隔一段时间响一次
+    功能循环：更新天气 → 校准时间 → 读取传感器 → 检测人体 → 时间自动推送
+    每个任务按自己的时间表执行，互不干扰
+    """
+    print("\n" + "="*50)
+    print(" 定时任务系统启动！")
+    print("="*50)
+    
+    # 记录上次执行时间（初始化为当前时间）
+    last_weather = time.time()
+    last_ntp = time.time()
+    last_sensor = time.time()
+    last_sr602 = time.time()
+    last_time_check = time.time()  # 新增：时间自动推送检查
+    
+    # 主循环：不断检查是否到了该执行任务的时间
+    while True:
+        current_time = time.time()
+        
+        # 任务1：更新天气数据（按配置间隔）
+        if current_time - last_weather >= WEATHER_REFRESH_INTERVAL:
+            # 用锁保护屏幕串口，防止和屏幕控制线程冲突
+            with screen_lock:
+                weather_module.get_weather_by_ip(screen_uart, force=False)
+            last_weather = current_time
+        
+        # 任务2：校准系统时间（按配置间隔）
+        ntp_interval_seconds = NTP_CALIBRATION_HOURS * 3600
+        if current_time - last_ntp >= ntp_interval_seconds:
+            ntp_module.sync_ntp_to_rtc()
+            last_ntp = current_time
+        
+        # 任务3：读取传感器数据（按配置间隔，含TVOC/甲醛/温湿度）
+        if sensor and sensor_uart:
+            if current_time - last_sensor >= SENSOR_READ_INTERVAL:
+                # 用锁保护传感器串口
+                with sensor_lock:
+                    sensor.read_sensor_data(screen_uart, force=False)
+                last_sensor = current_time
+        
+        # 任务4：人体检测（按配置间隔，控制屏幕亮度）
+        if current_time - last_sr602 >= DETECT_INTERVAL:
+            sr602_module.detect_and_control_brightness(screen_uart, verbose=VERBOSE_SR602)
+            last_sr602 = current_time
+        
+        # 任务5：时间自动推送（每秒检查，有变化才推送）
+        # 关键修复：自动检测时间变化并推送
+        if current_time - last_time_check >= 1:
+            ntp_module.send_time_to_serial_screen(screen_uart)  # 新增函数：自动检查并推送
+            last_time_check = current_time
+        
+        # 休息0.1秒再检查，避免CPU占用过高
+        time.sleep(0.1)
+
+# ==================== 主函数（程序入口） ====================
+def main():
+    """
+    程序从这里开始运行
+    就像电影的开幕，只做一次开场，然后交给演员表演
+    """
+    # 步骤1：执行一次性初始化
+    screen_uart, sensor, sensor_uart = initialize_system()
+    
+    # 如果初始化失败，程序退出
+    if screen_uart is None:
+        print("\n系统初始化失败，程序终止运行")
+        return
+    
+    # 步骤2：创建互斥锁（保护两个串口不被同时操作）
+    # 使用_thread.allocate_lock()代替threading.Lock()
+    screen_lock = _thread.allocate_lock()  # 保护屏幕串口
+    sensor_lock = _thread.allocate_lock()  # 保护传感器串口
+    
+    # 步骤3：启动屏幕控制子系统（在独立线程运行）
+    print("\n[线程管理] 启动屏幕控制子系统（独立线程）...")
+    try:
+        _thread.start_new_thread(
+            screen_control_subsystem.run_screen_control_subsystem,
+            (screen_uart, sensor, screen_lock)
+        )
+        print("屏幕控制线程启动成功")
+    except Exception as e:
+        print(f"屏幕控制线程启动失败：{e}")
+        return
+    
+    # 步骤4：启动定时任务系统（在主线程运行）
+    print("\n[线程管理] 启动定时任务系统（主线程）...")
+    try:
+        run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_lock)
+    except KeyboardInterrupt:
+        print("\n\n用户主动中断程序运行")
+    except Exception as e:
+        print(f"\n定时任务系统异常：{e}")
+
+# ==================== 独立运行入口（真正的debug模式） ====================
+# 当这个文件被直接运行时，启动完整系统
 if __name__ == "__main__":
-    """程序启动入口：调用主函数，执行开机初始化和核心绑定"""
+    """
+    独立运行模式：可以直接运行这个文件启动完整系统
+    就像直接启动汽车引擎，而不是只检查仪表盘
+    这个入口用于调试和测试，无需其他文件配合
+    """
+    print("\n" + "="*60)
+    print(" 进入独立运行模式")
+    print("   将启动完整的双线程系统")
+    print("   按Ctrl+C可停止运行")
+    print("="*60)
+    
+    # 直接启动主函数（运行完整系统）
     main()

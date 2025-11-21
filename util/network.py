@@ -1,62 +1,84 @@
-# ===导入依赖模块=======
-# 时间工具模块：提供秒级延时（WiFi连接超时等待）
-import time
-# 网络控制模块：提供WLAN接口（WiFi连接核心，支持STA客户端模式）
+# ==================== 网络连接工具 ====================
+# 这个文件负责连接WiFi网络，像手机的"WiFi设置"功能
+# 功能说明：让设备能上网，才能获取天气和时间
+# 使用场景：开机时调用一次，连接路由器
+
+# ==================== 导入必要工具 ====================
+# network模块：控制WiFi硬件（STA模式=连接路由器，AP模式=当热点）
 import network
-# 配置文件导入：WiFi账号密码（统一管理，避免硬编码）
-from config import WIFI_SSID, WIFI_PWD
+# time模块：延时等待，给WiFi连接留出时间
+import time
 
-# ===模块配置=======
-# DEBUG日志控制开关：需与main.py全局VERBOSE对齐（建议在main中传入或统一赋值）
-# 作用：控制连接过程中的详细日志（如“连接中...剩余X秒”），True启用，False关闭
-VERBOSE = False
+# 从配置导入WiFi账号密码和调试开关
+from config import WIFI_SSID, WIFI_PWD, VERBOSE_NETWORK
 
-# ===核心函数：WiFi连接（STA客户端模式）=======
+# ==================== WiFi连接函数 ====================
 def connect_wifi():
     """
-    连接指定WiFi网络（STA客户端模式，仅支持2.4G网络）
-    核心特性：
-    1. 自动激活网卡，检查当前连接状态
-    2. 15秒超时等待（避免无限阻塞）
-    3. 详细状态提示（必显核心状态，DEBUG日志受VERBOSE控制）
-    4. 连接失败时给出明确排查建议（密码/网络频段）
-    :return: 连接结果标识 → True=连接成功，False=连接失败
-    连接流程：
-    1. 初始化WLAN为STA客户端模式（非AP热点模式）
-    2. 激活无线网卡
-    3. 未连接时，发起WiFi连接（使用config配置的SSID和密码）
-    4. 超时循环等待：每秒检查连接状态，输出剩余时间（受VERBOSE控制）
-    5. 连接成功：输出IP地址（必显），返回True
-    6. 连接失败：输出排查建议（必显），返回False
+    连接WiFi路由器（就像手机连WiFi的操作）
+    支持2.4G网络，不支持5G
+    返回：True=连接成功，False=连接失败
+    机制：激活网卡 → 发起连接 → 等待15秒 → 检查是否连上
     """
-    # 步骤1：初始化WLAN为STA客户端模式（network.STA_IF=客户端，用于连接路由器）
+    # 1. 创建WiFi客户端（STA模式）
+    # 就像打开手机的WiFi开关
     wlan = network.WLAN(network.STA_IF)
-    # 步骤2：激活无线网卡（True=激活，False=关闭）
+    
+    # 2. 激活WiFi硬件
     wlan.active(True)
     
-    # 步骤3：检查当前连接状态，未连接则发起连接
-    if not wlan.isconnected():
-        # 核心状态输出（必显，告知用户正在连接的WiFi名称）
-        print(f"正在连接 WiFi：{WIFI_SSID}（仅支持2.4G网络）")
-        # 发起WiFi连接（传入SSID和密码，底层自动完成认证）
-        wlan.connect(WIFI_SSID, WIFI_PWD)
-        
-        # 步骤4：15秒超时等待（循环检查连接状态）
-        timeout = 15  # 超时时间（秒）
-        while not wlan.isconnected() and timeout > 0:
-            # DEBUG日志：仅VERBOSE=True时输出连接进度（剩余时间）
-            if VERBOSE:
-                print(f"[WIFI DEBUG] 连接中... 剩余 {timeout} 秒")
-            time.sleep(1)  # 每秒检查一次，降低CPU占用
-            timeout -= 1  # 超时倒计时
-    
-    # 步骤5：判断连接结果并返回
+    # 3. 如果已经连接，直接返回成功
     if wlan.isconnected():
-        # 核心状态输出（必显，告知用户连接成功及设备IP地址）
-        ip_addr = wlan.ifconfig()[0]  # 提取IP地址（ifconfig返回：(IP,子网掩码,网关,DNS)）
-        print(f"WiFi连接成功！设备IP地址：{ip_addr}")
+        ip = wlan.ifconfig()[0]
+        if VERBOSE_NETWORK:
+            print(f"WiFi已连接，IP地址：{ip}")
+        return True
+    
+    # 4. 发起连接（就像手机点击WiFi名称输入密码）
+    print(f"正在连接WiFi：{WIFI_SSID}...")
+    wlan.connect(WIFI_SSID, WIFI_PWD)
+    
+    # 5. 等待连接结果（最多等15秒）
+    # 就像手机连WiFi时转圈圈的等待过程
+    timeout = 15
+    while not wlan.isconnected() and timeout > 0:
+        if VERBOSE_NETWORK:
+            print(f"  连接中... {timeout}秒")
+        time.sleep(1)
+        timeout -= 1
+    
+    # 6. 检查连接结果
+    if wlan.isconnected():
+        # 成功：打印IP地址（就像手机显示已连接）
+        ip = wlan.ifconfig()[0]
+        print(f"✅ WiFi连接成功！设备IP：{ip}")
         return True
     else:
-        # 核心状态输出（必显，告知用户连接失败及排查建议）
-        print("WiFi连接失败！请排查：1. 密码是否正确；2. 网络是否为2.4G（不支持5G）；3. 信号是否稳定")
+        # 失败：给出排查建议（就像手机提示密码错误）
+        print("❌ WiFi连接失败！请检查：")
+        print("   1. 密码是否正确")
+        print("   2. WiFi是否为2.4G（不支持5G）")
+        print("   3. 信号是否太弱")
         return False
+
+# ==================== 独立测试入口 ====================
+if __name__ == "__main__":
+    """
+    独立测试：直接运行这个文件，测试WiFi连接功能
+    就像手机的"WiFi诊断"功能
+    """
+    print("="*40)
+    print(" WiFi连接 - 独立测试")
+    print("="*40)
+    
+    # 测试连接
+    result = connect_wifi()
+    
+    if result:
+        print("\n✅ 测试通过：WiFi连接成功")
+        print("   设备可以正常上网")
+    else:
+        print("\n❌ 测试失败：无法连接WiFi")
+        print("   请按提示检查配置")
+    
+    print("\n独立测试结束")
