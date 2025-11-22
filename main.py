@@ -17,8 +17,8 @@ import function.ntp_clock as ntp_module  # 网络时间同步
 import function.air_quality_sensor as sensor_module  # 空气质量传感器
 import function.weather as weather_module  # 天气数据获取
 import screen_control_subsystem          # 屏幕指令处理
-import function.human_presence_sensor as sr602_module  # 人体检测
-import function.auto_light_control as auto_light_control  # 自动亮度控制
+import function.human_presence as sr602_module  # 人体检测
+import function.lux_screenlight as lux_screenlight  # 自动亮度控制
 
 
 import config
@@ -128,7 +128,7 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
     print("\n" + "="*50)
     print(" 定时任务系统启动！")
     print("="*50)
-    
+
     # 记录上次执行时间（初始化为当前时间）
     last_weather = time.time()
     last_ntp = time.time()
@@ -187,7 +187,7 @@ def main():
     """
 
     _thread.start_new_thread(
-        sr602_module.lux_sensor_detect_thread,
+        lux_screenlight.lux_sensor_detect_thread,
         (config.VERBOSE_LUX_SENSOR,)
     )
 

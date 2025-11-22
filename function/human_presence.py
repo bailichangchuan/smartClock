@@ -11,9 +11,7 @@ import time
 
 # 导入整个config模块（避免单变量导入失败）
 import config
-
-
-global suggested_brightness
+from function import lux_screenlight
 
 # ==================== 模块级状态变量（替代函数属性） ====================
 # 记录检测状态（避免重复操作）
@@ -136,7 +134,7 @@ def _detect_human(sensor_pin):
     return sensor_pin.value() == 1
 
 # ==================== 亮度控制逻辑 ====================
-def _control_brightness(uart, is_present):
+def _control_brightness(uart, is_present, suggested_brightness):
     """
     根据检测结果控制屏幕亮度
     参数：
@@ -147,7 +145,6 @@ def _control_brightness(uart, is_present):
       无人 → 渐减到0（熄灭）
     """
     global _last_presence_state
-    global suggested_brightness
 
     # 初始化状态（首次运行时）
     if _last_presence_state is None:
@@ -186,6 +183,7 @@ def detect_and_control_brightness(uart, verbose=None):
     调用时机：在定时任务循环中反复调用
     机制：初始化传感器 → 读取状态 → 控制亮度
     """
+
     if verbose is None:
         verbose = config.VERBOSE_SR602
     
@@ -199,8 +197,8 @@ def detect_and_control_brightness(uart, verbose=None):
     # 初始化屏幕亮度（开机时设置一次）
     global _current_brightness
     if _current_brightness is None:
-        uart.write(f"dim={config.DEFAULT_SCREEN_BRIGHTNESS}".encode() + b'\xff\xff\xff')
-        _current_brightness = config.DEFAULT_SCREEN_BRIGHTNESS
+        uart.write(f"dim={lux_screenlight.suggested_brightness}".encode() + b'\xff\xff\xff')
+        _current_brightness = lux_screenlight.suggested_brightness
         if verbose:
             print(f"屏幕亮度初始化：{_current_brightness}%")
     
@@ -209,14 +207,14 @@ def detect_and_control_brightness(uart, verbose=None):
         is_present = _detect_human(sensor_pin)
         
         # 根据状态控制亮度
-        _control_brightness(uart, is_present)
+        _control_brightness(uart, is_present, lux_screenlight.suggested_brightness)
         
         # 调试日志
         if verbose and _last_presence_state != is_present:
             print(f"人体状态变化：{'有人' if is_present else '无人'}")
         
     except Exception as e:
-        print(f"检测过程出错：{e}")
+        print(f"人体传感器检测过程出错：{e}")
 
 # ==================== 独立测试入口 ====================
 if __name__ == "__main__":
@@ -291,99 +289,5 @@ if __name__ == "__main__":
 
 
 # ===lux_sensor环境光传感器模块（仅计算建议亮度）=======
-
-
-# ===全局状态变量=======
-current_adc_value = 0
-suggested_brightness = 0
-adc = None
-
-def _map_adc_to_brightness(adc_value):
-    """
-    直接将ADC值映射到屏幕亮度
-    """
-    # 限制ADC值在配置范围内
-    adc_value = max(config.LUX_SENSOR_MIN_ADC, min(adc_value, config.LUX_SENSOR_MAX_ADC))
-    
-    # 线性映射
-    normalized = (adc_value - config.LUX_SENSOR_MIN_ADC) / (config.LUX_SENSOR_MAX_ADC - config.LUX_SENSOR_MIN_ADC)
-    
-    # 确保在0-1范围内
-    normalized = max(0, min(1, normalized))
-    
-    # 线性映射到亮度范围
-    brightness = config.LUX_SENSOR_MIN_BRIGHTNESS + normalized * (config.LUX_SENSOR_MAX_BRIGHTNESS - config.LUX_SENSOR_MIN_BRIGHTNESS)
-    
-    return int(brightness)
-
-def _smooth_value(new_value, old_value):
-    """应用指数平滑滤波"""
-    return (new_value * config.LUX_SENSOR_SMOOTHING_FACTOR + 
-            old_value * (1 - config.LUX_SENSOR_SMOOTHING_FACTOR))
-
-def lux_sensor_detect_thread(verbose):
-    """lux_sensor环境光检测独立线程"""
-    global current_adc_value, suggested_brightness, adc
-    
-    # ADC初始化
-    try:
-        adc = machine.ADC(machine.Pin(config.LUX_SENSOR_ADC_PIN))
-        adc.atten(machine.ADC.ATTN_11DB)
-        adc.width(machine.ADC.WIDTH_12BIT)
-        
-        print(f"[lux_sensor] 传感器初始化成功 → ADC引脚：GPIO{config.LUX_SENSOR_ADC_PIN}")
-        print(f"[lux_sensor] ADC映射范围: {config.LUX_SENSOR_MIN_ADC}-{config.LUX_SENSOR_MAX_ADC} → {config.LUX_SENSOR_MIN_BRIGHTNESS}-{config.LUX_SENSOR_MAX_BRIGHTNESS}%")
-    except Exception as e:
-        print(f"[lux_sensor ERROR] 传感器初始化失败：{e}")
-        return
-    
-    # 初始建议亮度计算
-    suggested_brightness = (config.LUX_SENSOR_MIN_BRIGHTNESS + config.LUX_SENSOR_MAX_BRIGHTNESS) // 2
-    print(f"[lux_sensor] 环境光检测启动 → 初始建议亮度：{suggested_brightness}%")
-    
-    # 主循环
-    print(f"[lux_sensor] 开始环境光检测 → 检测间隔：{config.LUX_SENSOR_READ_INTERVAL}s")
-    cycle_count = 0
-    
-    while True:
-        try:
-            # 读取ADC值
-            raw_adc_value = adc.read()
-            
-            # 应用平滑滤波
-            current_adc_value = _smooth_value(raw_adc_value, current_adc_value)
-            
-            # 映射到建议亮度
-            new_suggested_brightness = _map_adc_to_brightness(current_adc_value)
-            
-            # 更新建议亮度
-            if new_suggested_brightness != suggested_brightness:
-                old_brightness = suggested_brightness
-                suggested_brightness = new_suggested_brightness
-                print(f"[lux_sensor] 环境光变化 → 建议亮度: {old_brightness}% → {suggested_brightness}% (ADC: {current_adc_value})")
-            # 定期输出调试信息
-            cycle_count += 1
-            if cycle_count % 5 == 0:  # 每5次循环输出一次
-                normalized = (current_adc_value - config.LUX_SENSOR_MIN_ADC) / (config.LUX_SENSOR_MAX_ADC - config.LUX_SENSOR_MIN_ADC)
-                print(f"[lux_sensor STATUS] ADC:{current_adc_value} Normalized:{normalized:.2f} Brightness:{suggested_brightness}%")
-            
-        except Exception as e:
-            print(f"[lux_sensor ERROR] 检测过程中出错：{e}")
-        
-        #time.sleep(config.LUX_SENSOR_READ_INTERVAL)
-
-def get_current_status():
-    """获取当前ADC值和建议亮度状态"""
-    return {
-        'adc_value': current_adc_value,
-        'suggested_brightness': suggested_brightness
-    }
-
-def get_suggested_brightness():
-    """直接获取当前建议亮度"""
-    return suggested_brightness
-
-
-
 
 

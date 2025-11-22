@@ -2,12 +2,10 @@
 import machine
 import time
 import config
-# _thread模块：创建新线程
-import _thread
 
 # ===全局状态变量=======
 current_adc_value = 0
-suggested_brightness = 0
+
 adc = None
 
 def _map_adc_to_brightness(adc_value):
@@ -82,20 +80,4 @@ def lux_sensor_detect_thread(verbose):
         except Exception as e:
             print(f"[lux_sensor ERROR] 检测过程中出错：{e}")
         
-        #time.sleep(config.LUX_SENSOR_READ_INTERVAL)
-
-def get_current_status():
-    """获取当前ADC值和建议亮度状态"""
-    return {
-        'adc_value': current_adc_value,
-        'suggested_brightness': suggested_brightness
-    }
-
-def get_suggested_brightness():
-    """直接获取当前建议亮度"""
-    return suggested_brightness
-
-
-
-
-
+        time.sleep(config.LUX_SENSOR_READ_INTERVAL)
