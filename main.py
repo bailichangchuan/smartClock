@@ -46,16 +46,12 @@ def initialize_system():
     
     # 1. 连接WiFi
     print("\n[步骤1/5] 连接WiFi网络...")
-    if not net_util.connect_wifi():
-        print("❌ WiFi连接失败，程序无法继续运行")
-        return None, None, None   # 返回空表示失败
-    
-    print("✅ WiFi连接成功！\n")
-    
-    _thread.start_new_thread(
-            sr602_module.lux_sensor_detect_thread,
-            (config.VERBOSE_LUX_SENSOR,)
-        )
+    try:
+        if not net_util.connect_wifi():
+            print("❌ WiFi连接失败，程序无法继续运行")
+            print("✅ WiFi连接成功！\n")
+    except Exception as e:
+        print(f"WiFi连接线程启动失败：{e}")
 
     # 2. 初始化串口2（连接屏幕，用于显示数据）
     print("[步骤2/5] 初始化屏幕串口...")
@@ -189,6 +185,13 @@ def main():
     程序从这里开始运行
     就像电影的开幕，只做一次开场，然后交给演员表演
     """
+
+    _thread.start_new_thread(
+        sr602_module.lux_sensor_detect_thread,
+        (config.VERBOSE_LUX_SENSOR,)
+    )
+
+        
     # 步骤1：执行一次性初始化
     screen_uart, sensor, sensor_uart = initialize_system()
     
