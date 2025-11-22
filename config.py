@@ -47,6 +47,14 @@ SERIAL_RX_PIN = 4                    # RX引脚：接屏幕TX（GPIO4）
 # SR602人体传感器（接模块）
 SR602_DATA_PIN = 0                   # 数据引脚：接传感器输出线（GPIO0）
 
+LUX_SENSOR_ADC_PIN = 6
+LUX_SENSOR_READ_INTERVAL = 2
+LUX_SENSOR_MIN_ADC = 20
+LUX_SENSOR_MAX_ADC = 300
+LUX_SENSOR_MIN_BRIGHTNESS = 5
+LUX_SENSOR_MAX_BRIGHTNESS = 90
+LUX_SENSOR_SMOOTHING_FACTOR = 0.3
+
 # ==================== 高级设置区（一般不用修改） ====================
 # NTP服务器（除非阿里云不能用，否则不要改）
 NTP_SERVER = "ntp.aliyun.com"        # 国内推荐，响应快
@@ -64,10 +72,11 @@ API_DOMAIN = "api.seniverse.com"     # 知心天气官方域名
 # 这些开关控制各模块的详细日志输出，True会打印大量信息，影响性能
 VERBOSE_NETWORK = False     # 网络连接日志（WiFi/NTP）
 VERBOSE_TIME_PRINT = False  # 控制台时间打印（调试用）
-VERBOSE_SCREEN_SEND = False # 屏幕推送日志（显示每个指令）
+VERBOSE_SCREEN_SEND = True  # 屏幕推送日志（显示每个指令）
 VERBOSE_NTP = False         # NTP时间同步详细日志
 VERBOSE_WEATHER = False     # 天气API请求/响应日志
 VERBOSE_SR602 = False       # 人体检测详细日志
 VERBOSE_SENSOR = False       # 空气质量传感器详细日志（新增）
 VERBOSE_MAIN = False        # 主程序日志：True打印详细过程，False静默运行
 VERBOSE_SCREEN = False      # 屏幕日志：True显示按键信息，False不显示
+VERBOSE_LUX_SENSOR = True  # 环境光传感器日志：True显示检测值，False不显示

@@ -8,21 +8,21 @@
 import machine
 # time模块：延时函数
 import time
-# _thread模块：创建新线程（Pico和ESP32通用，MicroPython没有threading模块）
+# _thread模块：创建新线程
 import _thread
 
-# 导入功能模块（每个模块负责一个独立功能）
+# 导入功能模块
 import util.network as net_util          # WiFi连接功能
-
-# 关键修复：确保导入整个模块，避免函数调用失败
-import function.ntp_clock as ntp_module  # 网络时间同步（包含get_current_formatted_time）
+import function.ntp_clock as ntp_module  # 网络时间同步
 import function.air_quality_sensor as sensor_module  # 空气质量传感器
 import function.weather as weather_module  # 天气数据获取
-
 import screen_control_subsystem          # 屏幕指令处理
 import function.human_presence_sensor as sr602_module  # 人体检测
+import function.auto_light_control as auto_light_control  # 自动亮度控制
 
-# 从配置文件读取参数（包括所有VERBOSE开关）
+
+import config
+# 从配置文件读取参数
 from config import (
     SERIAL_PORT, SERIAL_BAUD_RATE, SERIAL_TX_PIN, SERIAL_RX_PIN,
     UART_NUM, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN,
@@ -44,7 +44,7 @@ def initialize_system():
     print(" 系统启动中... 正在初始化硬件")
     print("="*50)
     
-    # 1. 连接WiFi（没有网络就无法获取天气和时间）
+    # 1. 连接WiFi
     print("\n[步骤1/5] 连接WiFi网络...")
     if not net_util.connect_wifi():
         print("❌ WiFi连接失败，程序无法继续运行")
@@ -52,6 +52,11 @@ def initialize_system():
     
     print("✅ WiFi连接成功！\n")
     
+    _thread.start_new_thread(
+            sr602_module.lux_sensor_detect_thread,
+            (config.VERBOSE_LUX_SENSOR,)
+        )
+
     # 2. 初始化串口2（连接屏幕，用于显示数据）
     print("[步骤2/5] 初始化屏幕串口...")
     screen_uart = machine.UART(
@@ -74,7 +79,6 @@ def initialize_system():
     
     # 4. 初始化传感器对象（包含TVOC/甲醛/温湿度等所有功能）
     print("[步骤4/5] 初始化空气质量传感器...")
-    # 关键修复：传递VERBOSE_SENSOR开关
     sensor = sensor_module.MultiSensor(uart=sensor_uart, verbose=VERBOSE_SENSOR)
     
     # 5. 同步网络时间（让系统知道现在几点）
@@ -84,7 +88,6 @@ def initialize_system():
     while ntp_attempts < max_attempts:
         success, tz = ntp_module.sync_ntp_to_rtc()
         if success:
-            # 关键修复：直接调用已导入的模块函数，确保函数存在
             current_time = ntp_module.get_current_formatted_time()
             print(f"   ✅ 时间校准成功：{current_time} (UTC+{tz:.1f})")
             break
@@ -98,8 +101,8 @@ def initialize_system():
     print(" 硬件初始化完成！")
     print("="*50)
     
-    # 6. 开机强制推送所有数据（确保屏幕显示最新信息，非阻塞）
-    # 这个操作不影响主流程，使用try-except防止失败阻塞启动
+    # 6. 开机强制推送所有数据（确保屏幕显示最新信息）
+    # 使用try-except防止失败阻塞启动
     print("\n[强制推送] 开机推送所有数据到屏幕...")
     try:
         if screen_uart and sensor_uart and sensor:
@@ -158,6 +161,11 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
         if sensor and sensor_uart:
             if current_time - last_sensor >= SENSOR_READ_INTERVAL:
                 # 用锁保护传感器串口
+
+
+                sensor_uart.read(sensor_uart.any())
+
+
                 with sensor_lock:
                     sensor.read_sensor_data(screen_uart, force=False)
                 last_sensor = current_time
@@ -168,12 +176,11 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
             last_sr602 = current_time
         
         # 任务5：时间自动推送（每秒检查，有变化才推送）
-        # 关键修复：自动检测时间变化并推送
         if current_time - last_time_check >= 1:
-            ntp_module.send_time_to_serial_screen(screen_uart)  # 新增函数：自动检查并推送
+            ntp_module.send_time_to_serial_screen(screen_uart)
             last_time_check = current_time
         
-        # 休息0.1秒再检查，避免CPU占用过高
+        # 休息0.1秒再检查，让出空余位置给其他线程
         time.sleep(0.1)
 
 # ==================== 主函数（程序入口） ====================
@@ -191,7 +198,6 @@ def main():
         return
     
     # 步骤2：创建互斥锁（保护两个串口不被同时操作）
-    # 使用_thread.allocate_lock()代替threading.Lock()
     screen_lock = _thread.allocate_lock()  # 保护屏幕串口
     sensor_lock = _thread.allocate_lock()  # 保护传感器串口
     
@@ -216,19 +222,13 @@ def main():
     except Exception as e:
         print(f"\n定时任务系统异常：{e}")
 
-# ==================== 独立运行入口（真正的debug模式） ====================
-# 当这个文件被直接运行时，启动完整系统
+# ==================== 运行入口 ====================
+# 当这个文件被运行时，启动完整系统
 if __name__ == "__main__":
-    """
-    独立运行模式：可以直接运行这个文件启动完整系统
-    就像直接启动汽车引擎，而不是只检查仪表盘
-    这个入口用于调试和测试，无需其他文件配合
-    """
+
     print("\n" + "="*60)
-    print(" 进入独立运行模式")
-    print("   将启动完整的双线程系统")
     print("   按Ctrl+C可停止运行")
     print("="*60)
     
-    # 直接启动主函数（运行完整系统）
+    # 直接启动主函数
     main()

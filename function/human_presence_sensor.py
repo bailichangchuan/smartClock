@@ -12,6 +12,9 @@ import time
 # 导入整个config模块（避免单变量导入失败）
 import config
 
+
+global suggested_brightness
+
 # ==================== 模块级状态变量（替代函数属性） ====================
 # 记录检测状态（避免重复操作）
 _last_presence_state = None      # 上次是否有人（True/False）
@@ -57,22 +60,39 @@ def _fade_in(uart, target_brightness):
         _current_brightness = config.DEFAULT_SCREEN_BRIGHTNESS
     
     # 如果当前亮度已经≥目标，直接返回
-    if _current_brightness >= target_brightness:
-        return
-    
-    # 循环增加亮度
-    while _current_brightness < target_brightness:
-        _current_brightness = min(_current_brightness + config.FADE_STEP, target_brightness)
+    if _current_brightness > target_brightness:
+        while _current_brightness > target_brightness:
+            _current_brightness = max(_current_brightness - config.FADE_STEP, target_brightness)
         
-        # 发送亮度指令（屏幕协议：dim=值）
-        try:
-            uart.write(f"dim={_current_brightness}".encode() + b'\xff\xff\xff')
-        except:
+            # 发送亮度指令（屏幕协议：dim=值）
+            try:
+                uart.write(f"dim={_current_brightness}".encode() + b'\xff\xff\xff')
+            except:
             # 屏幕未响应时中断渐变
-            break
+                break
         
-        # 延时控制渐变速度（太快会闪，太慢等不及）
-        time.sleep(config.FADE_DELAY)
+            # 延时控制渐变速度（太快会闪，太慢等不及）
+            time.sleep(config.FADE_DELAY)
+
+
+        
+    elif _current_brightness == target_brightness:
+        return
+
+    else:
+    # 循环增加亮度
+        while _current_brightness < target_brightness:
+            _current_brightness = min(_current_brightness + config.FADE_STEP, target_brightness)
+        
+            # 发送亮度指令（屏幕协议：dim=值）
+            try:
+                uart.write(f"dim={_current_brightness}".encode() + b'\xff\xff\xff')
+            except:
+            # 屏幕未响应时中断渐变
+                break
+        
+            # 延时控制渐变速度（太快会闪，太慢等不及）
+            time.sleep(config.FADE_DELAY)
 
 def _fade_out(uart):
     """
@@ -127,22 +147,23 @@ def _control_brightness(uart, is_present):
       无人 → 渐减到0（熄灭）
     """
     global _last_presence_state
-    
+    global suggested_brightness
+
     # 初始化状态（首次运行时）
     if _last_presence_state is None:
         _last_presence_state = None
     
     # 状态未变化时，不做任何操作（避免重复渐变）
-    if is_present == _last_presence_state:
-        return
+    #if is_present == _last_presence_state:
+     #  return
     
     # 检测到有人的处理
     if is_present:
         if config.VERBOSE_SR602:
-            print(f"有人靠近 → 屏幕渐亮至{config.DEFAULT_SCREEN_BRIGHTNESS}%")
+            print(f"有人靠近 → 屏幕渐亮至{suggested_brightness}%")
         
         # 渐增亮度
-        _fade_in(uart, config.DEFAULT_SCREEN_BRIGHTNESS)
+        _fade_in(uart, suggested_brightness)
     
     # 检测到无人的处理
     else:
@@ -247,3 +268,122 @@ if __name__ == "__main__":
     print("   说明：未连接真实传感器，仅验证算法逻辑")
     
     print("\n独立测试结束")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ===lux_sensor环境光传感器模块（仅计算建议亮度）=======
+
+
+# ===全局状态变量=======
+current_adc_value = 0
+suggested_brightness = 0
+adc = None
+
+def _map_adc_to_brightness(adc_value):
+    """
+    直接将ADC值映射到屏幕亮度
+    """
+    # 限制ADC值在配置范围内
+    adc_value = max(config.LUX_SENSOR_MIN_ADC, min(adc_value, config.LUX_SENSOR_MAX_ADC))
+    
+    # 线性映射
+    normalized = (adc_value - config.LUX_SENSOR_MIN_ADC) / (config.LUX_SENSOR_MAX_ADC - config.LUX_SENSOR_MIN_ADC)
+    
+    # 确保在0-1范围内
+    normalized = max(0, min(1, normalized))
+    
+    # 线性映射到亮度范围
+    brightness = config.LUX_SENSOR_MIN_BRIGHTNESS + normalized * (config.LUX_SENSOR_MAX_BRIGHTNESS - config.LUX_SENSOR_MIN_BRIGHTNESS)
+    
+    return int(brightness)
+
+def _smooth_value(new_value, old_value):
+    """应用指数平滑滤波"""
+    return (new_value * config.LUX_SENSOR_SMOOTHING_FACTOR + 
+            old_value * (1 - config.LUX_SENSOR_SMOOTHING_FACTOR))
+
+def lux_sensor_detect_thread(verbose):
+    """lux_sensor环境光检测独立线程"""
+    global current_adc_value, suggested_brightness, adc
+    
+    # ADC初始化
+    try:
+        adc = machine.ADC(machine.Pin(config.LUX_SENSOR_ADC_PIN))
+        adc.atten(machine.ADC.ATTN_11DB)
+        adc.width(machine.ADC.WIDTH_12BIT)
+        
+        print(f"[lux_sensor] 传感器初始化成功 → ADC引脚：GPIO{config.LUX_SENSOR_ADC_PIN}")
+        print(f"[lux_sensor] ADC映射范围: {config.LUX_SENSOR_MIN_ADC}-{config.LUX_SENSOR_MAX_ADC} → {config.LUX_SENSOR_MIN_BRIGHTNESS}-{config.LUX_SENSOR_MAX_BRIGHTNESS}%")
+    except Exception as e:
+        print(f"[lux_sensor ERROR] 传感器初始化失败：{e}")
+        return
+    
+    # 初始建议亮度计算
+    suggested_brightness = (config.LUX_SENSOR_MIN_BRIGHTNESS + config.LUX_SENSOR_MAX_BRIGHTNESS) // 2
+    print(f"[lux_sensor] 环境光检测启动 → 初始建议亮度：{suggested_brightness}%")
+    
+    # 主循环
+    print(f"[lux_sensor] 开始环境光检测 → 检测间隔：{config.LUX_SENSOR_READ_INTERVAL}s")
+    cycle_count = 0
+    
+    while True:
+        try:
+            # 读取ADC值
+            raw_adc_value = adc.read()
+            
+            # 应用平滑滤波
+            current_adc_value = _smooth_value(raw_adc_value, current_adc_value)
+            
+            # 映射到建议亮度
+            new_suggested_brightness = _map_adc_to_brightness(current_adc_value)
+            
+            # 更新建议亮度
+            if new_suggested_brightness != suggested_brightness:
+                old_brightness = suggested_brightness
+                suggested_brightness = new_suggested_brightness
+                print(f"[lux_sensor] 环境光变化 → 建议亮度: {old_brightness}% → {suggested_brightness}% (ADC: {current_adc_value})")
+            # 定期输出调试信息
+            cycle_count += 1
+            if cycle_count % 5 == 0:  # 每5次循环输出一次
+                normalized = (current_adc_value - config.LUX_SENSOR_MIN_ADC) / (config.LUX_SENSOR_MAX_ADC - config.LUX_SENSOR_MIN_ADC)
+                print(f"[lux_sensor STATUS] ADC:{current_adc_value} Normalized:{normalized:.2f} Brightness:{suggested_brightness}%")
+            
+        except Exception as e:
+            print(f"[lux_sensor ERROR] 检测过程中出错：{e}")
+        
+        #time.sleep(config.LUX_SENSOR_READ_INTERVAL)
+
+def get_current_status():
+    """获取当前ADC值和建议亮度状态"""
+    return {
+        'adc_value': current_adc_value,
+        'suggested_brightness': suggested_brightness
+    }
+
+def get_suggested_brightness():
+    """直接获取当前建议亮度"""
+    return suggested_brightness
+
+
+
+
+

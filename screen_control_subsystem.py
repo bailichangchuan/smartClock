@@ -1,7 +1,6 @@
 # ==================== 屏幕控制子系统 ====================
 # 这个文件负责处理屏幕点击事件，像一位24小时待命的客服
 # 工作流程：监听屏幕消息 → 解析指令 → 执行对应操作
-# 设计思路：把"听"和"做"放在一个线程，避免多线程混乱
 
 # ==================== 导入必要工具 ====================
 # machine模块：硬件串口操作
@@ -11,7 +10,7 @@ import _thread
 # time模块：延时控制
 import time
 
-# 导入功能模块（避免在函数内运行时导入失败）
+# 导入功能模块）
 import function.ntp_clock as ntp_module
 import function.weather as weather_module
 
@@ -27,7 +26,7 @@ OP_RELEASE = 0x00                    # 用户"松开"按钮的操作码
 
 # 指令队列：存放待处理的屏幕指令（先进先出，最多10条）
 command_queue = []
-# 使用简单的列表操作作为锁（MicroPython没有threading.Lock）
+# 使用简单的列表操作作为锁
 # 通过最小化临界区来避免冲突
 
 # ==================== 区域二：指令监听功能（耳朵） ====================
@@ -97,7 +96,7 @@ def parse_and_execute(uart, sensor=None, lock=None, verbose=VERBOSE_SCREEN):
             operation = data[3]
             
             if verbose:
-                print(f"🧠 解析指令：页{page_id} 控件{control_id} 操作{operation}")
+                print(f"解析指令：页{page_id} 控件{control_id} 操作{operation}")
             
             # 只处理"按下"操作（松开不处理，避免重复执行）
             if operation == OP_PRESS:
@@ -107,17 +106,18 @@ def parse_and_execute(uart, sensor=None, lock=None, verbose=VERBOSE_SCREEN):
                 # 按钮1：页0控件0 → 强制更新时间和天气
                 if page_id == 0 and control_id == 0:
                     if verbose:
-                        print("⏰ 执行操作：强制更新时间和天气")
+                        print("执行操作：强制更新时间和天气")
                     # 用锁保护串口，防止和定时任务冲突
                     if lock:
                         with lock:
                             ntp_module.send_time_to_serial_screen(uart, force=True)
+                            time.sleep_ms(10)
                             weather_module.get_weather_by_ip(uart, force=True)
                 
-                # 按钮2：页2控件0 → 强制更新空气质量（含TVOC/甲醛/温湿度）
+                # 按钮2：页2控件0 → 强制更新空气质量
                 elif page_id == 2 and control_id == 0:
                     if verbose:
-                        print("🌫️ 执行操作：强制更新空气质量")
+                        print("执行操作：强制更新空气质量")
                     if sensor and lock:
                         with lock:
                             sensor.read_sensor_data(uart, force=True)

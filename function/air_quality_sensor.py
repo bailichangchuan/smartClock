@@ -18,7 +18,7 @@ class UARTReader:
     工作机制：持续读取 → 累积缓存 → 查找帧头 → 提取完整帧
     """
     
-    def __init__(self, uart=None, verbose=False):
+    def __init__(self, uart=1, verbose=False):
         """
         初始化读数器，告诉它用哪个串口
         参数：
@@ -28,11 +28,8 @@ class UARTReader:
         self.uart = uart
         self.verbose = verbose
         self.buffer = b""  # 数据缓存：暂存没处理完的数据
-        
-        if uart is None:
-            raise ValueError("必须提供串口实例！就像开吸尘器需要插电源")
     
-    def find_data_frame(self, frame_header, frame_length, timeout=1.0):
+    def find_data_frame(self, frame_header, frame_length, timeout=3.0):
         """
         在串口数据里找一条完整的消息帧
         就像在沙子里找一颗特定的贝壳
@@ -167,7 +164,7 @@ class MultiSensor:
             frame = self.reader.find_data_frame(
                 self.DATA_HEADER,
                 self.FRAME_LENGTH,
-                timeout=8.0
+                timeout=5.0
             )
             
             if not frame:
@@ -255,7 +252,7 @@ class MultiSensor:
         # TVOC
         current_tvoc = f"{data['tvoc']} mg/m³"
         if force or current_tvoc != self.last_tvoc:
-            upload(uart, current_tvoc, "t8", "txt")
+            upload(uart, current_tvoc, "t8888", "txt")
             self.last_tvoc = current_tvoc
         
         # PM2.5
@@ -267,7 +264,7 @@ class MultiSensor:
         # PM10
         current_pm10 = f"{data['pm10']} μg/m³"
         if force or current_pm10 != self.last_pm10:
-            upload(uart, current_pm10, "t10", "txt")
+            upload(uart, current_pm10, "t999", "txt")
             self.last_pm10 = current_pm10
         
         # 温度
