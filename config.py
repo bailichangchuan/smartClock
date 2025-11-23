@@ -79,4 +79,4 @@ VERBOSE_SR602 = False       # 人体检测详细日志
 VERBOSE_SENSOR = False       # 空气质量传感器详细日志（新增）
 VERBOSE_MAIN = False        # 主程序日志：True打印详细过程，False静默运行
 VERBOSE_SCREEN = False      # 屏幕日志：True显示按键信息，False不显示
-VERBOSE_LUX_SENSOR = True  # 环境光传感器日志：True显示检测值，False不显示
+VERBOSE_LUX_SENSOR = False  # 环境光传感器日志：True显示检测值，False不显示

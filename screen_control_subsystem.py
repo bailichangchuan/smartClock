@@ -28,6 +28,7 @@ OP_RELEASE = 0x00                    # 用户"松开"按钮的操作码
 command_queue = []
 # 使用简单的列表操作作为锁
 # 通过最小化临界区来避免冲突
+at_page = 0
 
 # ==================== 区域二：指令监听功能（耳朵） ====================
 def listen_screen_commands(uart, verbose=VERBOSE_SCREEN):
@@ -44,6 +45,7 @@ def listen_screen_commands(uart, verbose=VERBOSE_SCREEN):
     # 无限循环监听（程序运行期间不停止）
     while True:
         # 检查串口缓冲区是否有数据
+
         if uart.any() > 0:
             # 读取所有可用数据（可能是一条完整指令，也可能是片段）
             data = uart.read(uart.any())
@@ -84,7 +86,10 @@ def parse_and_execute(uart, sensor=None, lock=None, verbose=VERBOSE_SCREEN):
       lock: 互斥锁（保护串口不被两个线程同时使用）
       verbose: 调试开关
     """
+    global at_page
+
     while True:
+
         # 检查队列是否有待处理指令
         if command_queue:
             # 临界区：取出指令后立即处理，不持有锁太久
@@ -127,7 +132,30 @@ def parse_and_execute(uart, sensor=None, lock=None, verbose=VERBOSE_SCREEN):
                 else:
                     if verbose:
                         print(f"⚠️  未定义按钮：页{page_id} 控件{control_id}（无操作）")
-        
+
+
+            if operation == OP_RELEASE:
+                # 按钮1：页0控件0 → 强制更新时间和天气
+                if page_id == 0 and control_id == 0:
+                    if verbose:
+                        print("应切换到page0")
+                    # 用锁保护串口，防止和定时任务冲突
+                        at_page = 0
+
+                if page_id == 1 and control_id == 0:
+                    if verbose:
+                        print("已切换到page")
+                    # 用锁保护串口，防止和定时任务冲突
+                        at_page = 1  
+                         
+                if page_id == 2 and control_id == 0:
+                    if verbose:
+                        print("已切换到page0")
+                    # 用锁保护串口，防止和定时任务冲突
+                        at_page = 2
+
+
+
         # 处理间隔：50毫秒（给CPU一点休息时间）
         time.sleep_ms(50)
 

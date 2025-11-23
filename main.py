@@ -33,6 +33,8 @@ from config import (
     DETECT_INTERVAL
 )
 
+from screen_control_subsystem import at_page
+
 # ==================== 初始化区域（开机只运行一次） ====================
 def initialize_system():
     """
@@ -111,8 +113,9 @@ def initialize_system():
             print("   ✅ 天气已推送")
             
             # 强制推送传感器（读取当前环境数据）
-            sensor.read_sensor_data(screen_uart, force=True)
-            print("   ✅ 传感器数据已推送")
+            #sensor.read_sensor_data(screen_uart, force=True)
+            #print("   ✅ 传感器数据已推送")
+            
     except Exception as e:
         print(f"   ⚠️  强制推送部分失败：{e}（不影响主程序运行，已跳过）")
     
@@ -139,22 +142,35 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
     # 主循环：不断检查是否到了该执行任务的时间
     while True:
         current_time = time.time()
-        
-        # 任务1：更新天气数据（按配置间隔）
-        if current_time - last_weather >= WEATHER_REFRESH_INTERVAL:
-            # 用锁保护屏幕串口，防止和屏幕控制线程冲突
-            with screen_lock:
-                weather_module.get_weather_by_ip(screen_uart, force=False)
-            last_weather = current_time
-        
-        # 任务2：校准系统时间（按配置间隔）
-        ntp_interval_seconds = NTP_CALIBRATION_HOURS * 3600
-        if current_time - last_ntp >= ntp_interval_seconds:
-            ntp_module.sync_ntp_to_rtc()
-            last_ntp = current_time
-        
-        # 任务3：读取传感器数据（按配置间隔，含TVOC/甲醛/温湿度）
-        if sensor and sensor_uart:
+
+        if at_page == 0:
+            
+            # 任务1：更新天气数据（按配置间隔）
+            if current_time - last_weather >= WEATHER_REFRESH_INTERVAL:
+                # 用锁保护屏幕串口，防止和屏幕控制线程冲突
+                with screen_lock:
+                    weather_module.get_weather_by_ip(screen_uart, force=False)
+                last_weather = current_time
+                
+            # 任务2：校准系统时间（按配置间隔）
+            ntp_interval_seconds = NTP_CALIBRATION_HOURS * 3600
+            if current_time - last_ntp >= ntp_interval_seconds:
+                ntp_module.sync_ntp_to_rtc()
+                last_ntp = current_time
+            
+            # 任务4：人体检测（按配置间隔，控制屏幕亮度）
+            if current_time - last_sr602 >= DETECT_INTERVAL:
+                sr602_module.detect_and_control_brightness(screen_uart, verbose=VERBOSE_SR602)
+                last_sr602 = current_time
+            
+            # 任务5：时间自动推送（每秒检查，有变化才推送）
+            if current_time - last_time_check >= 1:
+                ntp_module.send_time_to_serial_screen(screen_uart)
+                last_time_check = current_time
+
+        elif at_page == 1:
+
+            # 任务6：更新传感器数据（按配置间隔，含TVOC/甲醛/温湿度）
             if current_time - last_sensor >= SENSOR_READ_INTERVAL:
                 # 用锁保护传感器串口
                 sensor_uart.read(sensor_uart.any())
@@ -162,16 +178,40 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
                     sensor.read_sensor_data(screen_uart, force=False)
                 last_sensor = current_time
         
-        # 任务4：人体检测（按配置间隔，控制屏幕亮度）
-        if current_time - last_sr602 >= DETECT_INTERVAL:
-            sr602_module.detect_and_control_brightness(screen_uart, verbose=VERBOSE_SR602)
-            last_sr602 = current_time
-        
-        # 任务5：时间自动推送（每秒检查，有变化才推送）
-        if current_time - last_time_check >= 1:
-            ntp_module.send_time_to_serial_screen(screen_uart)
-            last_time_check = current_time
-        
+        else:
+
+            # 任务1：更新天气数据（按配置间隔）
+            if current_time - last_weather >= WEATHER_REFRESH_INTERVAL:
+                # 用锁保护屏幕串口，防止和屏幕控制线程冲突
+                with screen_lock:
+                    weather_module.get_weather_by_ip(screen_uart, force=False)
+                last_weather = current_time
+    
+            # 任务2：校准系统时间（按配置间隔）
+            ntp_interval_seconds = NTP_CALIBRATION_HOURS * 3600
+            if current_time - last_ntp >= ntp_interval_seconds:
+                ntp_module.sync_ntp_to_rtc()
+                last_ntp = current_time
+            
+            # 任务3：读取传感器数据（按配置间隔，含TVOC/甲醛/温湿度）
+            if sensor and sensor_uart:
+                if current_time - last_sensor >= SENSOR_READ_INTERVAL:
+                    # 用锁保护传感器串口
+                    sensor_uart.read(sensor_uart.any())
+                    with sensor_lock:
+                        sensor.read_sensor_data(screen_uart, force=False)
+                    last_sensor = current_time
+            
+            # 任务4：人体检测（按配置间隔，控制屏幕亮度）
+            if current_time - last_sr602 >= DETECT_INTERVAL:
+                sr602_module.detect_and_control_brightness(screen_uart, verbose=VERBOSE_SR602)
+                last_sr602 = current_time
+            
+            # 任务5：时间自动推送（每秒检查，有变化才推送）
+            if current_time - last_time_check >= 1:
+                ntp_module.send_time_to_serial_screen(screen_uart)
+                last_time_check = current_time
+
         # 休息0.1秒再检查，让出空余位置给其他线程
         time.sleep(0.1)
 

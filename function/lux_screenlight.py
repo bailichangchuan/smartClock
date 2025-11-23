@@ -70,12 +70,14 @@ def lux_sensor_detect_thread(verbose):
             if new_suggested_brightness != suggested_brightness:
                 old_brightness = suggested_brightness
                 suggested_brightness = new_suggested_brightness
-                print(f"[lux_sensor] 环境光变化 → 建议亮度: {old_brightness}% → {suggested_brightness}% (ADC: {current_adc_value})")
+                if verbose:
+                    print(f"[lux_sensor] 环境光变化 → 建议亮度: {old_brightness}% → {suggested_brightness}% (ADC: {current_adc_value})")
             # 定期输出调试信息
             cycle_count += 1
             if cycle_count % 5 == 0:  # 每5次循环输出一次
                 normalized = (current_adc_value - config.LUX_SENSOR_MIN_ADC) / (config.LUX_SENSOR_MAX_ADC - config.LUX_SENSOR_MIN_ADC)
-                print(f"[lux_sensor STATUS] ADC:{current_adc_value} Normalized:{normalized:.2f} Brightness:{suggested_brightness}%")
+                if verbose:
+                    print(f"[lux_sensor STATUS] ADC:{current_adc_value} Normalized:{normalized:.2f} Brightness:{suggested_brightness}%")
             
         except Exception as e:
             print(f"[lux_sensor ERROR] 检测过程中出错：{e}")
