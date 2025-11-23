@@ -101,7 +101,7 @@ def initialize_system():
     
     # 6. 开机强制推送所有数据（确保屏幕显示最新信息）
     # 使用try-except防止失败阻塞启动
-    print("\n[强制推送] 开机推送所有数据到屏幕...")
+    print("\n[强制推送] 开机推送数据到屏幕...")
     try:
         if screen_uart and sensor_uart and sensor:
             # 强制推送时间（NTP已校准）
@@ -115,7 +115,7 @@ def initialize_system():
             # 强制推送传感器（读取当前环境数据）
             #sensor.read_sensor_data(screen_uart, force=True)
             #print("   ✅ 传感器数据已推送")
-            
+
     except Exception as e:
         print(f"   ⚠️  强制推送部分失败：{e}（不影响主程序运行，已跳过）")
     
