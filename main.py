@@ -157,11 +157,7 @@ def run_continuous_tasks(screen_uart, sensor, sensor_uart, screen_lock, sensor_l
         if sensor and sensor_uart:
             if current_time - last_sensor >= SENSOR_READ_INTERVAL:
                 # 用锁保护传感器串口
-
-
                 sensor_uart.read(sensor_uart.any())
-
-
                 with sensor_lock:
                     sensor.read_sensor_data(screen_uart, force=False)
                 last_sensor = current_time

@@ -224,7 +224,7 @@ def send_time_to_serial_screen(uart, force=False):
     # 格式化数据
     current_date = f"{year:04d}-{month:02d}-{day:02d}"
     # 星期转换：1=周一...7=周日 → "一"..."日"
-    weekday_str = [None, '一', '二', '三', '四', '五', '六', '日'][weekday_num]
+    weekday_str = ['日', '一', '二', '三', '四', '五', '六', None][weekday_num]
     current_weekday = f"星期{weekday_str}"
     current_minute_val = minute
     
